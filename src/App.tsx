@@ -486,6 +486,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook'>('dashboard');
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [isLogLoading, setIsLogLoading] = useState(false);
+  const [githubUrl, setGithubUrl] = useState('');
+  const [showGithubInput, setShowGithubInput] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch logs from Supabase
@@ -1018,6 +1020,200 @@ export default function App() {
   const COLORS = [CLARO_RED, '#666666', '#999999'];
 
   // Excel Import Handler
+  // Excel Import Handler
+  const processExcelData = (bstr: any) => {
+    try {
+      const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+      
+      // 1. Read Main Data
+      const analiticoSheetName = wb.SheetNames.find(name => {
+        const n = normalizeStr(name);
+        return n.includes('ANALITICO') || n.includes('VISITAS') || n.includes('DADOS') || n.includes('GERAL');
+      }) || wb.SheetNames.find(name => !normalizeStr(name).includes('BASE')) || wb.SheetNames[0];
+      
+      const ws = wb.Sheets[analiticoSheetName];
+      const rawRows = XLSX.utils.sheet_to_json(ws) as any[];
+
+      if (rawRows.length === 0) {
+        setIsImporting(false);
+        setImportError("Arquivo vazio ou sem dados válidos.");
+        return;
+      }
+
+      setImportProgress(5);
+
+      // 2. Read BASE Data
+      const baseCidadeSheetName = wb.SheetNames.find(name => {
+        const n = normalizeStr(name);
+        return n === 'BASE' || n.includes('BASE') || n.includes('REFERENCIA') || n.includes('METAS') || n.includes('CIDADE');
+      });
+      
+      let importedBaseCidade: BaseCidadeData[] = [];
+      if (baseCidadeSheetName) {
+        const wsBase = wb.Sheets[baseCidadeSheetName];
+        const baseRawData = XLSX.utils.sheet_to_json(wsBase, { header: 1 }) as any[][];
+        
+        let headerRowIndex = -1;
+        for (let i = 0; i < Math.min(baseRawData.length, 20); i++) {
+          const row = baseRawData[i];
+          if (row && row.some(cell => {
+            const s = normalizeStr(String(cell || ''));
+            return s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE' || s === 'BASE';
+          })) {
+            headerRowIndex = i;
+            break;
+          }
+        }
+
+        const startIdx = headerRowIndex === -1 ? 0 : headerRowIndex + 1;
+        const headerRow = headerRowIndex === -1 ? [] : baseRawData[headerRowIndex];
+
+        let colIdxCidade = 0;
+        let colIdxHFC = 2;
+        let colIdxGPON = 3;
+        let colIdxHibrido = 4;
+        let colIdxOutros = 5;
+
+        if (headerRow.length > 0) {
+          headerRow.forEach((cell, idx) => {
+            const s = normalizeStr(String(cell || ''));
+            if (s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE') colIdxCidade = idx;
+            if (s.includes('HFC')) colIdxHFC = idx;
+            if (s.includes('GPON') || s.includes('FIBRA') || s.includes('G PON')) colIdxGPON = idx;
+            if (s.includes('HIBRID') || s.includes('HIBRIDO')) colIdxHibrido = idx;
+            if (s.includes('OUTRO') || s.includes('OUTRA')) colIdxOutros = idx;
+          });
+        }
+
+        importedBaseCidade = baseRawData.slice(startIdx).flatMap((row) => {
+          if (!row || row.length <= Math.max(colIdxCidade, colIdxHFC, colIdxGPON, colIdxHibrido, colIdxOutros)) {
+            if (row && row[colIdxCidade]) {
+              const cidade = String(row[colIdxCidade]).trim();
+              if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
+              return [
+                { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
+                { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
+                { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
+                { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
+              ];
+            }
+            return [];
+          }
+          const cidade = String(row[colIdxCidade] || '').trim();
+          if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
+          return [
+            { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
+            { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
+            { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
+            { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
+          ];
+        });
+      }
+
+      // 3. Process Main Data in Chunks
+      const mappedData: VisitData[] = [];
+      const chunkSize = 1000;
+      let currentIndex = 0;
+
+      const processChunk = () => {
+        const end = Math.min(currentIndex + chunkSize, rawRows.length);
+        for (let i = currentIndex; i < end; i++) {
+          const row = rawRows[i];
+          
+          let mesValue = 'N/A';
+          let fullDateValue = new Date();
+          const rawDate = row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
+          
+          if (rawDate) {
+            let date: Date;
+            if (rawDate instanceof Date) {
+              date = rawDate;
+            } else if (typeof rawDate === 'number') {
+              date = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+            } else {
+              date = new Date(rawDate);
+            }
+
+            if (!isNaN(date.getTime())) {
+              const year = date.getUTCFullYear();
+              const month = date.getUTCMonth();
+              const day = date.getUTCDate();
+              fullDateValue = new Date(year, month, day);
+              
+              const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+              mesValue = months[fullDateValue.getMonth()];
+            }
+          }
+
+          let techValue = String(row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
+          if (techValue.includes('HIBRID') || techValue.includes('HÍBRID')) techValue = 'HÍBRIDO';
+          else if (techValue.includes('GPON') || techValue.includes('FIBRA') || techValue.includes('FTTH')) techValue = 'GPON';
+          else if (techValue.includes('HFC') || techValue.includes('COAXIAL') || techValue.includes('CABO')) techValue = 'HFC';
+          else techValue = 'HFC';
+
+          const nota = Number(row.NOTA_AT1 || row.nota_at1 || row.NOTA || row.AT1 || row.notaAT1 || row.NOTA_FINAL || row.PONTUACAO || row.SCORE || 0);
+          
+          const rawStatus = String(row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
+          let statusValue: 'Executada' | 'Cancelada' = 'Cancelada';
+          if (rawStatus.includes('EXEC') || rawStatus.includes('CONCLU') || rawStatus.includes('FINALIZ') || rawStatus.includes('ENCERRADA') || rawStatus.includes('REALIZADA') || rawStatus.includes('OK') || rawStatus.includes('FECHADA') || nota > 0) {
+            statusValue = 'Executada';
+          }
+
+          mappedData.push({
+            id: `import-${i}`,
+            mes: mesValue,
+            fullDate: fullDateValue,
+            cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
+            area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
+            expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
+            tecnologia: techValue as Technology,
+            status: statusValue,
+            notaAT1: nota,
+            node: String(row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
+            cdBaixa: String(row.CD_BAIXA || row.cd_baixa || row.BAIXA || row.COD_BAIXA || 'N/A').trim(),
+            grupoBaixa: String(row['GRUPO BAIXA'] || row.GRUPO_BAIXA || row.grupo_baixa || row.GRUPO || 'N/A').trim()
+          });
+        }
+
+        currentIndex = end;
+        const progress = Math.max(5, Math.min(99, Math.round((currentIndex / rawRows.length) * 100)));
+        setImportProgress(progress);
+
+        if (currentIndex < rawRows.length) {
+          setTimeout(processChunk, 0);
+        } else {
+          setImportProgress(100);
+          if (mappedData.length > 0) {
+            setBaseData(mappedData);
+            if (importedBaseCidade.length > 0) {
+              setBaseCidadeData(importedBaseCidade);
+            }
+            setFilters({
+              mes: 'Todos',
+              cidade: ['Todos'],
+              area: 'Todos',
+              expurgo: 'Todos',
+              tecnologia: 'Todos',
+              grupoBaixa: 'Todos',
+              startDate: '',
+              endDate: ''
+            });
+          } else {
+            setImportError('O arquivo parece estar vazio ou em formato inválido.');
+          }
+          setIsImporting(false);
+        }
+      };
+
+      processChunk();
+
+    } catch (err) {
+      setImportError('Erro ao processar o arquivo Excel. Verifique o formato.');
+      setIsImporting(false);
+      console.error(err);
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1028,206 +1224,48 @@ export default function App() {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
-        
-        // 1. Read Main Data
-        const analiticoSheetName = wb.SheetNames.find(name => {
-          const n = normalizeStr(name);
-          return n.includes('ANALITICO') || n.includes('VISITAS') || n.includes('DADOS') || n.includes('GERAL');
-        }) || wb.SheetNames.find(name => !normalizeStr(name).includes('BASE')) || wb.SheetNames[0];
-        
-        const ws = wb.Sheets[analiticoSheetName];
-        const rawRows = XLSX.utils.sheet_to_json(ws) as any[];
-
-        if (rawRows.length === 0) {
-          setIsImporting(false);
-          setImportError("Arquivo vazio ou sem dados válidos.");
-          return;
-        }
-
-        setImportProgress(5);
-
-        // 2. Read BASE Data
-        const baseCidadeSheetName = wb.SheetNames.find(name => {
-          const n = normalizeStr(name);
-          return n === 'BASE' || n.includes('BASE') || n.includes('REFERENCIA') || n.includes('METAS') || n.includes('CIDADE');
-        });
-        
-        let importedBaseCidade: BaseCidadeData[] = [];
-        if (baseCidadeSheetName) {
-          const wsBase = wb.Sheets[baseCidadeSheetName];
-          const baseRawData = XLSX.utils.sheet_to_json(wsBase, { header: 1 }) as any[][];
-          
-          let headerRowIndex = -1;
-          for (let i = 0; i < Math.min(baseRawData.length, 20); i++) {
-            const row = baseRawData[i];
-            if (row && row.some(cell => {
-              const s = normalizeStr(String(cell || ''));
-              return s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE' || s === 'BASE';
-            })) {
-              headerRowIndex = i;
-              break;
-            }
-          }
-
-          const startIdx = headerRowIndex === -1 ? 0 : headerRowIndex + 1;
-          const headerRow = headerRowIndex === -1 ? [] : baseRawData[headerRowIndex];
-
-          let colIdxCidade = 0;
-          let colIdxHFC = 2;
-          let colIdxGPON = 3;
-          let colIdxHibrido = 4;
-          let colIdxOutros = 5;
-
-          if (headerRow.length > 0) {
-            headerRow.forEach((cell, idx) => {
-              const s = normalizeStr(String(cell || ''));
-              if (s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE') colIdxCidade = idx;
-              if (s.includes('HFC')) colIdxHFC = idx;
-              if (s.includes('GPON') || s.includes('FIBRA') || s.includes('G PON')) colIdxGPON = idx;
-              if (s.includes('HIBRID') || s.includes('HIBRIDO')) colIdxHibrido = idx;
-              if (s.includes('OUTRO') || s.includes('OUTRA')) colIdxOutros = idx;
-            });
-          }
-
-          importedBaseCidade = baseRawData.slice(startIdx).flatMap((row) => {
-            if (!row || row.length <= Math.max(colIdxCidade, colIdxHFC, colIdxGPON, colIdxHibrido, colIdxOutros)) {
-              if (row && row[colIdxCidade]) {
-                const cidade = String(row[colIdxCidade]).trim();
-                if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
-                return [
-                  { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
-                  { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
-                  { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
-                  { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
-                ];
-              }
-              return [];
-            }
-            const cidade = String(row[colIdxCidade] || '').trim();
-            if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
-            return [
-              { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
-              { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
-              { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
-              { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
-            ];
-          });
-        }
-
-        // 3. Process Main Data in Chunks
-        const mappedData: VisitData[] = [];
-        const chunkSize = 1000;
-        let currentIndex = 0;
-
-        const processChunk = () => {
-          const end = Math.min(currentIndex + chunkSize, rawRows.length);
-          for (let i = currentIndex; i < end; i++) {
-            const row = rawRows[i];
-            
-            let mesValue = 'N/A';
-            let fullDateValue = new Date();
-            const rawDate = row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
-            
-            if (rawDate) {
-              let date: Date;
-              if (rawDate instanceof Date) {
-                date = rawDate;
-              } else if (typeof rawDate === 'number') {
-                date = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
-              } else {
-                date = new Date(rawDate);
-              }
-
-              if (!isNaN(date.getTime())) {
-                // Ensure we use the UTC components to create a local date at 00:00:00
-                // This handles the case where Excel dates are interpreted as UTC
-                const year = date.getUTCFullYear();
-                const month = date.getUTCMonth();
-                const day = date.getUTCDate();
-                fullDateValue = new Date(year, month, day);
-                
-                const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-                mesValue = months[fullDateValue.getMonth()];
-              }
-            }
-
-            let techValue = String(row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
-            if (techValue.includes('HIBRID') || techValue.includes('HÍBRID')) techValue = 'HÍBRIDO';
-            else if (techValue.includes('GPON') || techValue.includes('FIBRA') || techValue.includes('FTTH')) techValue = 'GPON';
-            else if (techValue.includes('HFC') || techValue.includes('COAXIAL') || techValue.includes('CABO')) techValue = 'HFC';
-            else techValue = 'HFC';
-
-            const nota = Number(row.NOTA_AT1 || row.nota_at1 || row.NOTA || row.AT1 || row.notaAT1 || row.NOTA_FINAL || row.PONTUACAO || row.SCORE || 0);
-            
-            const rawStatus = String(row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
-            let statusValue: 'Executada' | 'Cancelada' = 'Cancelada';
-            if (rawStatus.includes('EXEC') || rawStatus.includes('CONCLU') || rawStatus.includes('FINALIZ') || rawStatus.includes('ENCERRADA') || rawStatus.includes('REALIZADA') || rawStatus.includes('OK') || rawStatus.includes('FECHADA') || nota > 0) {
-              statusValue = 'Executada';
-            }
-
-            mappedData.push({
-              id: `import-${i}`,
-              mes: mesValue,
-              fullDate: fullDateValue,
-              cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
-              area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
-              expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
-              tecnologia: techValue as Technology,
-              status: statusValue,
-              notaAT1: nota,
-              node: String(row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
-              cdBaixa: String(row.CD_BAIXA || row.cd_baixa || row.BAIXA || row.COD_BAIXA || 'N/A').trim(),
-              grupoBaixa: String(row['GRUPO BAIXA'] || row.GRUPO_BAIXA || row.grupo_baixa || row.GRUPO || 'N/A').trim()
-            });
-          }
-
-          currentIndex = end;
-          const progress = Math.max(5, Math.min(99, Math.round((currentIndex / rawRows.length) * 100)));
-          setImportProgress(progress);
-
-          if (currentIndex < rawRows.length) {
-            setTimeout(processChunk, 0);
-          } else {
-            // Processing complete
-            setImportProgress(100);
-            if (mappedData.length > 0) {
-              setBaseData(mappedData);
-              if (importedBaseCidade.length > 0) {
-                setBaseCidadeData(importedBaseCidade);
-              }
-              setFilters({
-                mes: 'Todos',
-                cidade: ['Todos'],
-                area: 'Todos',
-                expurgo: 'Todos',
-                tecnologia: 'Todos',
-                grupoBaixa: 'Todos',
-                startDate: '',
-                endDate: ''
-              });
-            } else {
-              setImportError('O arquivo parece estar vazio ou em formato inválido.');
-            }
-            setIsImporting(false);
-          }
-        };
-
-        processChunk();
-
-      } catch (err) {
-        setImportError('Erro ao processar o arquivo Excel. Verifique o formato.');
-        setIsImporting(false);
-        console.error(err);
-      }
+      processExcelData(evt.target?.result);
     };
     reader.onerror = () => {
       setImportError('Erro ao ler o arquivo.');
       setIsImporting(false);
     };
     reader.readAsBinaryString(file);
+  };
+
+  const handleGithubLoad = async () => {
+    if (!githubUrl) return;
+    
+    let rawUrl = githubUrl;
+    if (githubUrl.includes('github.com') && !githubUrl.includes('raw.githubusercontent.com')) {
+      rawUrl = githubUrl
+        .replace('github.com', 'raw.githubusercontent.com')
+        .replace('/blob/', '/');
+    }
+
+    setIsImporting(true);
+    setImportProgress(0);
+    setImportError(null);
+
+    try {
+      const response = await fetch(rawUrl);
+      if (!response.ok) throw new Error('Erro ao baixar arquivo do GitHub.');
+      
+      const blob = await response.blob();
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        processExcelData(evt.target?.result);
+        setShowGithubInput(false);
+      };
+      reader.onerror = () => {
+        setImportError('Erro ao ler o arquivo baixado.');
+        setIsImporting(false);
+      };
+      reader.readAsBinaryString(blob);
+    } catch (err: any) {
+      setImportError(err.message || 'Erro ao carregar do GitHub.');
+      setIsImporting(false);
+    }
   };
 
   return (
@@ -1263,6 +1301,13 @@ export default function App() {
               <Upload className="w-4 h-4" />
               <span>Importar Excel</span>
             </button>
+            <button 
+              onClick={() => setShowGithubInput(!showGithubInput)}
+              className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-6 rounded-full border-2 border-slate-200 transition-all shadow-sm active:scale-95"
+            >
+              <Activity className="w-4 h-4" />
+              <span>GitHub</span>
+            </button>
             {baseData.length > 0 && (
               <button 
                 onClick={() => {
@@ -1285,6 +1330,38 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        <AnimatePresence>
+          {showGithubInput && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="mt-4 overflow-hidden"
+            >
+              <div className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm flex flex-col md:flex-row gap-3">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Cole o link do arquivo Excel no GitHub (ex: https://github.com/usuario/repo/blob/main/dados.xlsx)"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-11 pr-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                  />
+                </div>
+                <button 
+                  onClick={handleGithubLoad}
+                  disabled={!githubUrl || isImporting}
+                  className="bg-[#EE1D23] hover:bg-[#D1191F] disabled:bg-slate-300 text-white font-black py-3 px-8 rounded-xl transition-all shadow-lg shadow-red-500/20 active:scale-95 uppercase italic text-sm flex items-center justify-center gap-2"
+                >
+                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Carregar
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {importError && (
           <motion.div 
@@ -1364,8 +1441,8 @@ export default function App() {
             <h2 className="text-4xl font-black text-[#333333] uppercase italic tracking-tighter mb-4">
               Bem-vindo ao Dashboard AT1 - G1
             </h2>
-            <p className="text-slate-500 font-bold text-lg max-w-md mb-10">
-              Para começar, importe o arquivo Excel com os dados de visitas técnicas e base de clientes.
+            <p className="text-slate-500 font-bold text-lg max-w-md mb-10 leading-relaxed uppercase tracking-wide opacity-60">
+              Para começar, importe o arquivo Excel com os dados de visitas técnicas e base de clientes, ou cole um link do GitHub.
             </p>
             
             <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-8 w-full border-t border-slate-100 pt-12">

@@ -1233,12 +1233,14 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
-  const handleGithubLoad = async () => {
-    if (!githubUrl) return;
+  const handleGithubLoad = async (urlToLoad?: string | React.MouseEvent) => {
+    const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+    const targetUrl = (typeof urlToLoad === 'string' ? urlToLoad : null) || githubUrl || preConfiguredUrl;
+    if (!targetUrl) return;
     
-    let rawUrl = githubUrl;
-    if (githubUrl.includes('github.com') && !githubUrl.includes('raw.githubusercontent.com')) {
-      rawUrl = githubUrl
+    let rawUrl = targetUrl;
+    if (targetUrl.includes('github.com') && !targetUrl.includes('raw.githubusercontent.com')) {
+      rawUrl = targetUrl
         .replace('github.com', 'raw.githubusercontent.com')
         .replace('/blob/', '/');
     }
@@ -1267,6 +1269,14 @@ export default function App() {
       setIsImporting(false);
     }
   };
+
+  // Auto-load from GitHub if pre-configured
+  React.useEffect(() => {
+    const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+    if (preConfiguredUrl && baseData.length === 0 && !isImporting) {
+      handleGithubLoad(preConfiguredUrl);
+    }
+  }, []);
 
   return (
     <ErrorBoundary>
@@ -1302,11 +1312,18 @@ export default function App() {
               <span>Importar Excel</span>
             </button>
             <button 
-              onClick={() => setShowGithubInput(!showGithubInput)}
+              onClick={() => {
+                const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+                if (preConfiguredUrl) {
+                  handleGithubLoad(preConfiguredUrl);
+                } else {
+                  setShowGithubInput(!showGithubInput);
+                }
+              }}
               className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-6 rounded-full border-2 border-slate-200 transition-all shadow-sm active:scale-95"
             >
               <Activity className="w-4 h-4" />
-              <span>GitHub</span>
+              <span>{(import.meta as any).env?.VITE_GITHUB_EXCEL_URL ? 'Sincronizar GitHub' : 'GitHub'}</span>
             </button>
             {baseData.length > 0 && (
               <button 

@@ -82,6 +82,9 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
     };
 
     try {
+      if (!supabase) {
+        throw new Error('Supabase não configurado. Adicione VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas Secrets.');
+      }
       if (editingId) {
         const { error } = await supabase
           .from('diario_de_bordo')
@@ -116,6 +119,9 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
   const handleDelete = async (id: string) => {
     if (!id) return;
     try {
+      if (!supabase) {
+        throw new Error('Supabase não configurado.');
+      }
       const { error } = await supabase
         .from('diario_de_bordo')
         .delete()
@@ -139,7 +145,7 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
   return (
     <div className="max-w-7xl mx-auto pb-20">
       <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-white to-slate-50">
+        <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-gradient-to-r from-white to-slate-50">
           <div>
             <h2 className="text-3xl font-black text-[#333333] uppercase italic tracking-tighter flex items-center gap-3">
               <BookOpen className="w-8 h-8 text-[#EE1D23]" />
@@ -147,8 +153,21 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
             </h2>
             <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest opacity-80">Registro de Incidentes e Chamados</p>
           </div>
+          {!supabase && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 max-w-md">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+              <p className="text-xs font-bold text-amber-800 leading-tight">
+                Supabase não configurado. O Diário de Bordo está em modo leitura/desativado. 
+                Configure <span className="underline">VITE_SUPABASE_URL</span> nas Secrets.
+              </p>
+            </div>
+          )}
           <button
             onClick={() => {
+              if (!supabase) {
+                alert('Supabase não configurado. Adicione as chaves nas Secrets para usar o Diário de Bordo.');
+                return;
+              }
               setIsAdding(!isAdding);
               if (!isAdding) {
                 setEditingId(null);
@@ -329,14 +348,26 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
                     <td className="px-8 py-6">
                       <div className="flex justify-end gap-2 transition-opacity">
                         <button
-                          onClick={() => handleEdit(entry)}
+                          onClick={() => {
+                            if (!supabase) {
+                              alert('Supabase não configurado. Adicione as chaves nas Secrets para editar registros.');
+                              return;
+                            }
+                            handleEdit(entry);
+                          }}
                           title="Editar registro"
                           className="p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-[#EE1D23] hover:border-[#EE1D23] transition-all active:scale-90"
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => setDeletingId(entry.id!)}
+                          onClick={() => {
+                            if (!supabase) {
+                              alert('Supabase não configurado. Adicione as chaves nas Secrets para excluir registros.');
+                              return;
+                            }
+                            setDeletingId(entry.id!);
+                          }}
                           title="Excluir registro"
                           className="p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-600 hover:border-red-600 transition-all active:scale-90"
                         >
@@ -494,6 +525,11 @@ export default function App() {
   const fetchLogs = async () => {
     setIsLogLoading(true);
     try {
+      if (!supabase) {
+        console.warn('Supabase não configurado. Diário de Bordo desativado.');
+        setLogEntries([]);
+        return;
+      }
       const { data, error } = await supabase
         .from('diario_de_bordo')
         .select('*')

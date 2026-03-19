@@ -2,11 +2,13 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Get from build environment (Vite) or localStorage
 const getEnv = (key: string) => {
-  return (import.meta as any).env?.[key] || localStorage.getItem(key) || '';
+  // Try import.meta.env first (baked in at build time)
+  const buildVal = (import.meta as any).env?.[key];
+  if (buildVal && buildVal !== '') return buildVal;
+  
+  // Fallback to localStorage (set manually in Settings)
+  return localStorage.getItem(key) || '';
 };
-
-const supabaseUrl = getEnv('VITE_SUPABASE_URL');
-const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
 
 let supabaseClient: SupabaseClient | null = null;
 
@@ -15,9 +17,10 @@ export const getSupabase = () => {
   const key = getEnv('VITE_SUPABASE_ANON_KEY');
 
   if (!url || !key) {
-    throw new Error('Supabase URL or Anon Key is missing. Please configure them in the Settings panel.');
+    return null;
   }
   
+  // Create client if it doesn't exist or if keys changed (though we usually reload on change)
   if (!supabaseClient) {
     supabaseClient = createClient(url, key);
   }
@@ -25,7 +28,5 @@ export const getSupabase = () => {
   return supabaseClient;
 };
 
-// For backward compatibility
-export const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey) 
-  : null;
+// Export the instance for backward compatibility
+export const supabase = getSupabase();

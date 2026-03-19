@@ -43,7 +43,7 @@ import {
 import * as XLSX from 'xlsx';
 import { MOCK_DATA, VisitData, Technology, BaseCidadeData, MOCK_BASE_CIDADE } from './data';
 import { cn } from './lib/utils';
-import { supabase } from './lib/supabase';
+import { getSupabase } from './lib/supabase';
 
 // Diário de Bordo Types
 interface LogEntry {
@@ -58,7 +58,12 @@ interface LogEntry {
 }
 
 // Diário de Bordo Component
-const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoading: boolean, onRefresh: () => void }) => {
+const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: { 
+  entries: LogEntry[], 
+  isLoading: boolean, 
+  onRefresh: () => void,
+  setShowSettings: (show: boolean) => void
+}) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -83,17 +88,18 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
     };
 
     try {
-      if (!supabase) {
+      const client = getSupabase();
+      if (!client) {
         throw new Error('Supabase não configurado. Adicione VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas Secrets.');
       }
       if (editingId) {
-        const { error } = await supabase
+        const { error } = await client
           .from('diario_de_bordo')
           .update(dataToSave)
           .eq('id', editingId);
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { error } = await client
           .from('diario_de_bordo')
           .insert([dataToSave]);
         if (error) throw error;
@@ -120,10 +126,11 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
   const handleDelete = async (id: string) => {
     if (!id) return;
     try {
-      if (!supabase) {
+      const client = getSupabase();
+      if (!client) {
         throw new Error('Supabase não configurado.');
       }
-      const { error } = await supabase
+      const { error } = await client
         .from('diario_de_bordo')
         .delete()
         .eq('id', id);
@@ -154,18 +161,18 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
             </h2>
             <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest opacity-80">Registro de Incidentes e Chamados</p>
           </div>
-          {!supabase && (
+          {!getSupabase() && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 max-w-md">
               <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
               <p className="text-xs font-bold text-amber-800 leading-tight">
                 Supabase não configurado. O Diário de Bordo está em modo leitura/desativado. 
-                Configure <span className="underline">VITE_SUPABASE_URL</span> nas Secrets.
+                Configure nas <span className="underline cursor-pointer" onClick={() => setShowSettings(true)}>Configurações</span>.
               </p>
             </div>
           )}
           <button
             onClick={() => {
-              if (!supabase) {
+              if (!getSupabase()) {
                 alert('Supabase não configurado. Adicione as chaves nas Secrets para usar o Diário de Bordo.');
                 return;
               }
@@ -350,7 +357,7 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
                       <div className="flex justify-end gap-2 transition-opacity">
                         <button
                           onClick={() => {
-                            if (!supabase) {
+                            if (!getSupabase()) {
                               alert('Supabase não configurado. Adicione as chaves nas Secrets para editar registros.');
                               return;
                             }
@@ -363,7 +370,7 @@ const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoa
                         </button>
                         <button
                           onClick={() => {
-                            if (!supabase) {
+                            if (!getSupabase()) {
                               alert('Supabase não configurado. Adicione as chaves nas Secrets para excluir registros.');
                               return;
                             }
@@ -525,19 +532,22 @@ export default function App() {
 
   // Helper to get environment variables with localStorage fallback
   const getEnv = (key: string) => {
-    return (import.meta as any).env?.[key] || localStorage.getItem(key) || '';
+    const buildVal = (import.meta as any).env?.[key];
+    if (buildVal && buildVal !== '') return buildVal;
+    return localStorage.getItem(key) || '';
   };
 
   // Fetch logs from Supabase
   const fetchLogs = async () => {
     setIsLogLoading(true);
     try {
-      if (!supabase) {
+      const client = getSupabase();
+      if (!client) {
         console.warn('Supabase não configurado. Diário de Bordo desativado.');
         setLogEntries([]);
         return;
       }
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('diario_de_bordo')
         .select('*')
         .order('created_at', { ascending: false });
@@ -2251,6 +2261,7 @@ export default function App() {
           entries={logEntries} 
           isLoading={isLogLoading} 
           onRefresh={fetchLogs} 
+          setShowSettings={setShowSettings}
         />
       )}
         
@@ -2360,7 +2371,25 @@ function SettingsModal({ onClose, onSave }: { onClose: () => void, onSave: () =>
           </div>
         </div>
 
-        <div className="mt-10 grid grid-cols-2 gap-4">
+        <div className="mt-8 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Status do Sistema (Build-time)</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${(import.meta as any).env?.VITE_SUPABASE_URL ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+              <span className="text-[9px] font-bold text-slate-500 uppercase">Supabase URL</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${(import.meta as any).env?.VITE_SUPABASE_ANON_KEY ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+              <span className="text-[9px] font-bold text-slate-500 uppercase">Supabase Key</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${(import.meta as any).env?.VITE_GITHUB_EXCEL_URL ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+              <span className="text-[9px] font-bold text-slate-500 uppercase">GitHub URL</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-4">
           <button
             onClick={onClose}
             className="bg-slate-100 hover:bg-slate-200 text-slate-500 font-black py-4 px-6 rounded-2xl transition-all active:scale-95 uppercase italic text-sm"

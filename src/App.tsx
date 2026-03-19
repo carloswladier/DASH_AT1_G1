@@ -25,7 +25,8 @@ import {
   Clock,
   AlertTriangle,
   Loader2,
-  BookOpen
+  BookOpen,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -519,7 +520,13 @@ export default function App() {
   const [isLogLoading, setIsLogLoading] = useState(false);
   const [githubUrl, setGithubUrl] = useState('');
   const [showGithubInput, setShowGithubInput] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper to get environment variables with localStorage fallback
+  const getEnv = (key: string) => {
+    return (import.meta as any).env?.[key] || localStorage.getItem(key) || '';
+  };
 
   // Fetch logs from Supabase
   const fetchLogs = async () => {
@@ -1270,7 +1277,7 @@ export default function App() {
   };
 
   const handleGithubLoad = async (urlToLoad?: string | React.MouseEvent) => {
-    const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+    const preConfiguredUrl = getEnv('VITE_GITHUB_EXCEL_URL');
     const targetUrl = (typeof urlToLoad === 'string' ? urlToLoad : null) || githubUrl || preConfiguredUrl;
     if (!targetUrl) return;
     
@@ -1308,7 +1315,7 @@ export default function App() {
 
   // Auto-load from GitHub if pre-configured
   React.useEffect(() => {
-    const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+    const preConfiguredUrl = getEnv('VITE_GITHUB_EXCEL_URL');
     if (preConfiguredUrl && baseData.length === 0 && !isImporting) {
       handleGithubLoad(preConfiguredUrl);
     }
@@ -1349,7 +1356,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => {
-                const preConfiguredUrl = (import.meta as any).env?.VITE_GITHUB_EXCEL_URL;
+                const preConfiguredUrl = getEnv('VITE_GITHUB_EXCEL_URL');
                 if (preConfiguredUrl) {
                   handleGithubLoad(preConfiguredUrl);
                 } else {
@@ -1359,7 +1366,14 @@ export default function App() {
               className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-6 rounded-full border-2 border-slate-200 transition-all shadow-sm active:scale-95"
             >
               <Activity className="w-4 h-4" />
-              <span>{(import.meta as any).env?.VITE_GITHUB_EXCEL_URL ? 'Sincronizar GitHub' : 'GitHub'}</span>
+              <span>{getEnv('VITE_GITHUB_EXCEL_URL') ? 'Sincronizar GitHub' : 'GitHub'}</span>
+            </button>
+            <button 
+              onClick={() => setShowSettings(true)}
+              className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-600 font-bold py-2.5 px-4 rounded-full border-2 border-slate-200 transition-all shadow-sm active:scale-95"
+              title="Configurações"
+            >
+              <Settings className="w-4 h-4" />
             </button>
             {baseData.length > 0 && (
               <button 
@@ -2252,9 +2266,120 @@ export default function App() {
               <ArrowUp className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
             </motion.button>
           )}
+          {showSettings && (
+            <SettingsModal 
+              onClose={() => setShowSettings(false)} 
+              onSave={() => {
+                setShowSettings(false);
+                // Reload data if URL changed
+                const url = getEnv('VITE_GITHUB_EXCEL_URL');
+                if (url && baseData.length === 0) {
+                  handleGithubLoad(url);
+                }
+                // Reload logs if Supabase changed
+                if (activeTab === 'logbook') {
+                  fetchLogs();
+                }
+              }}
+            />
+          )}
         </AnimatePresence>
       </div>
     </ErrorBoundary>
+  );
+}
+
+function SettingsModal({ onClose, onSave }: { onClose: () => void, onSave: () => void }) {
+  const [config, setConfig] = useState({
+    VITE_SUPABASE_URL: localStorage.getItem('VITE_SUPABASE_URL') || '',
+    VITE_SUPABASE_ANON_KEY: localStorage.getItem('VITE_SUPABASE_ANON_KEY') || '',
+    VITE_GITHUB_EXCEL_URL: localStorage.getItem('VITE_GITHUB_EXCEL_URL') || ''
+  });
+
+  const handleSave = () => {
+    localStorage.setItem('VITE_SUPABASE_URL', config.VITE_SUPABASE_URL);
+    localStorage.setItem('VITE_SUPABASE_ANON_KEY', config.VITE_SUPABASE_ANON_KEY);
+    localStorage.setItem('VITE_GITHUB_EXCEL_URL', config.VITE_GITHUB_EXCEL_URL);
+    onSave();
+    window.location.reload(); // Reload to apply new Supabase client
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className="bg-white rounded-[32px] shadow-2xl border border-slate-100 p-8 max-w-lg w-full"
+      >
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600">
+              <Settings className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-[#333333] uppercase italic tracking-tighter">Configurações</h3>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ajustes do Sistema</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+            <XCircle className="w-6 h-6 text-slate-300" />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Supabase URL</label>
+            <input
+              type="text"
+              value={config.VITE_SUPABASE_URL}
+              onChange={e => setConfig({ ...config, VITE_SUPABASE_URL: e.target.value })}
+              placeholder="https://xyz.supabase.co"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Supabase Anon Key</label>
+            <input
+              type="password"
+              value={config.VITE_SUPABASE_ANON_KEY}
+              onChange={e => setConfig({ ...config, VITE_SUPABASE_ANON_KEY: e.target.value })}
+              placeholder="eyJhbG..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">GitHub Excel URL</label>
+            <input
+              type="text"
+              value={config.VITE_GITHUB_EXCEL_URL}
+              onChange={e => setConfig({ ...config, VITE_GITHUB_EXCEL_URL: e.target.value })}
+              placeholder="https://github.com/..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+            />
+          </div>
+        </div>
+
+        <div className="mt-10 grid grid-cols-2 gap-4">
+          <button
+            onClick={onClose}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-500 font-black py-4 px-6 rounded-2xl transition-all active:scale-95 uppercase italic text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSave}
+            className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-4 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 uppercase italic text-sm flex items-center justify-center gap-2"
+          >
+            <Save className="w-4 h-4" />
+            Salvar
+          </button>
+        </div>
+        <p className="mt-4 text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest">
+          As configurações são salvas localmente no seu navegador.
+        </p>
+      </motion.div>
+    </div>
   );
 }
 

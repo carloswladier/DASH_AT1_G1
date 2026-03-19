@@ -1,0 +1,5 @@
+{
+  "name": "Dashboard de Visitas Técnicas",
+  "description": "Painel de acompanhamento de visitas técnicas com filtros por cidade, tecnologia e indicadores de performance G1.",
+  "requestFramePermissions": []
+}

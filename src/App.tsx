@@ -1,0 +1,2336 @@
+import React, { useState, useMemo, useRef, Component } from 'react';
+import { 
+  Filter, 
+  BarChart3, 
+  CheckCircle2, 
+  XCircle, 
+  Activity, 
+  MapPin, 
+  Calendar, 
+  Cpu, 
+  Calculator,
+  ChevronDown,
+  Upload,
+  FileSpreadsheet,
+  AlertCircle,
+  Wrench,
+  Signal,
+  Search,
+  ArrowUp,
+  Plus,
+  Save,
+  Trash2 as Trash,
+  Edit2,
+  Check,
+  Clock,
+  AlertTriangle,
+  Loader2,
+  BookOpen
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  Cell,
+  LabelList
+} from 'recharts';
+import * as XLSX from 'xlsx';
+import { MOCK_DATA, VisitData, Technology, BaseCidadeData, MOCK_BASE_CIDADE } from './data';
+import { cn } from './lib/utils';
+import { supabase } from './lib/supabase';
+
+// Diário de Bordo Types
+interface LogEntry {
+  id?: string;
+  created_at?: string;
+  data: string;
+  numero_chamado: string;
+  incidente: string;
+  descricao: string;
+  status: 'Pendente' | 'Em Andamento' | 'Resolvido';
+  data_conclusao?: string | null;
+}
+
+// Diário de Bordo Component
+const Logbook = ({ entries, isLoading, onRefresh }: { entries: LogEntry[], isLoading: boolean, onRefresh: () => void }) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<Partial<LogEntry>>({
+    data: new Date().toISOString().split('T')[0],
+    numero_chamado: '',
+    incidente: '',
+    descricao: '',
+    status: 'Pendente',
+    data_conclusao: null
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    
+    // Prepare data for Supabase (handle empty strings for dates)
+    const dataToSave = {
+      ...formData,
+      data_conclusao: formData.data_conclusao === '' ? null : formData.data_conclusao
+    };
+
+    try {
+      if (editingId) {
+        const { error } = await supabase
+          .from('diario_de_bordo')
+          .update(dataToSave)
+          .eq('id', editingId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('diario_de_bordo')
+          .insert([dataToSave]);
+        if (error) throw error;
+      }
+      setIsAdding(false);
+      setEditingId(null);
+      setFormData({
+        data: new Date().toISOString().split('T')[0],
+        numero_chamado: '',
+        incidente: '',
+        descricao: '',
+        status: 'Pendente',
+        data_conclusao: ''
+      });
+      onRefresh();
+    } catch (err: any) {
+      console.error('Error saving log:', err);
+      alert(`Erro ao salvar no banco de dados: ${err.message || 'Verifique a configuração do Supabase e se a tabela "diario_de_bordo" existe.'}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!id) return;
+    try {
+      const { error } = await supabase
+        .from('diario_de_bordo')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      setDeletingId(null);
+      onRefresh();
+    } catch (err: any) {
+      console.error('Error deleting log:', err);
+      alert(`Erro ao excluir registro: ${err.message || 'Erro desconhecido'}`);
+    }
+  };
+
+  const handleEdit = (entry: LogEntry) => {
+    setFormData(entry);
+    setEditingId(entry.id || null);
+    setIsAdding(true);
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto pb-20">
+      <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-white to-slate-50">
+          <div>
+            <h2 className="text-3xl font-black text-[#333333] uppercase italic tracking-tighter flex items-center gap-3">
+              <BookOpen className="w-8 h-8 text-[#EE1D23]" />
+              Diário de Bordo
+            </h2>
+            <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest opacity-80">Registro de Incidentes e Chamados</p>
+          </div>
+          <button
+            onClick={() => {
+              setIsAdding(!isAdding);
+              if (!isAdding) {
+                setEditingId(null);
+                setFormData({
+                  data: new Date().toISOString().split('T')[0],
+                  numero_chamado: '',
+                  incidente: '',
+                  descricao: '',
+                  status: 'Pendente',
+                  data_conclusao: null
+                });
+              }
+            }}
+            className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-3 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center gap-2 uppercase italic text-sm"
+          >
+            {isAdding ? <XCircle className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {isAdding ? 'Cancelar' : 'Novo Registro'}
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {isAdding && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden bg-slate-50 border-b border-slate-100"
+            >
+              <form onSubmit={handleSave} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Data</label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.data}
+                    onChange={e => setFormData({ ...formData, data: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Nº Chamado</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 123456"
+                    value={formData.numero_chamado}
+                    onChange={e => setFormData({ ...formData, numero_chamado: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Incidente</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Queda de link"
+                    value={formData.incidente}
+                    onChange={e => setFormData({ ...formData, incidente: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Descrição</label>
+                  <textarea
+                    required
+                    placeholder="Descreva o ocorrido..."
+                    value={formData.descricao}
+                    onChange={e => setFormData({ ...formData, descricao: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all min-h-[100px]"
+                  />
+                </div>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Status</label>
+                    <select
+                      value={formData.status}
+                      onChange={e => setFormData({ ...formData, status: e.target.value as any })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                    >
+                      <option value="Pendente">Pendente</option>
+                      <option value="Em Andamento">Em Andamento</option>
+                      <option value="Resolvido">Resolvido</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Data Conclusão</label>
+                    <input
+                      type="date"
+                      value={formData.data_conclusao}
+                      onChange={e => setFormData({ ...formData, data_conclusao: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
+                    />
+                  </div>
+                </div>
+                <div className="md:col-span-3 flex justify-end pt-4 border-t border-slate-200">
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="bg-[#333333] hover:bg-black text-white font-black py-4 px-10 rounded-2xl transition-all shadow-lg active:scale-95 flex items-center gap-3 uppercase italic text-sm disabled:opacity-50"
+                  >
+                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {editingId ? 'Atualizar Registro' : 'Gravar no Banco'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Data</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Nº Chamado</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Incidente</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Status</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Conclusão</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-8 py-20 text-center">
+                    <Loader2 className="w-10 h-10 text-[#EE1D23] animate-spin mx-auto mb-4" />
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Carregando dados...</p>
+                  </td>
+                </tr>
+              ) : entries.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-8 py-20 text-center">
+                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <BookOpen className="w-8 h-8 text-slate-200" />
+                    </div>
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Nenhum registro encontrado</p>
+                  </td>
+                </tr>
+              ) : (
+                entries.map(entry => (
+                  <tr key={entry.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-[#EE1D23]">
+                          <Calendar className="w-5 h-5" />
+                        </div>
+                        <span className="text-sm font-black text-[#333333]">{new Date(entry.data).toLocaleDateString('pt-BR')}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="text-xs font-black bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg uppercase tracking-wider">
+                        #{entry.numero_chamado}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="max-w-xs">
+                        <p className="text-sm font-black text-[#333333] mb-1">{entry.incidente}</p>
+                        <p className="text-xs font-bold text-slate-400 line-clamp-1">{entry.descricao}</p>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className={cn(
+                        "text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full flex items-center gap-1.5 w-fit",
+                        entry.status === 'Resolvido' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                        entry.status === 'Em Andamento' ? "bg-amber-50 text-amber-600 border border-amber-100" :
+                        "bg-red-50 text-[#EE1D23] border border-red-100"
+                      )}>
+                        {entry.status === 'Resolvido' ? <CheckCircle2 className="w-3 h-3" /> :
+                         entry.status === 'Em Andamento' ? <Clock className="w-3 h-3" /> :
+                         <AlertTriangle className="w-3 h-3" />}
+                        {entry.status}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="text-xs font-bold text-slate-500 italic">
+                        {entry.data_conclusao ? new Date(entry.data_conclusao).toLocaleDateString('pt-BR') : '-'}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex justify-end gap-2 transition-opacity">
+                        <button
+                          onClick={() => handleEdit(entry)}
+                          title="Editar registro"
+                          className="p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-[#EE1D23] hover:border-[#EE1D23] transition-all active:scale-90"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingId(entry.id!)}
+                          title="Excluir registro"
+                          className="p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-600 hover:border-red-600 transition-all active:scale-90"
+                        >
+                          <Trash className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Custom Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deletingId && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 p-8 max-w-sm w-full text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+                <Trash className="w-10 h-10 text-[#EE1D23]" />
+              </div>
+              <h3 className="text-2xl font-black text-[#333333] uppercase italic tracking-tighter mb-2">Excluir Registro</h3>
+              <p className="text-slate-500 font-bold mb-8 italic">Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita.</p>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setDeletingId(null)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-500 font-black py-4 px-6 rounded-2xl transition-all active:scale-95 uppercase italic text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDelete(deletingId)}
+                  className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-4 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 uppercase italic text-sm"
+                >
+                  Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// Claro Colors
+const CLARO_RED = '#EE1D23';
+const CLARO_DARK = '#1A1A1A';
+const CLARO_GRAY = '#F2F2F2';
+
+// Helper to normalize strings for comparison (remove accents, uppercase, trim, remove non-alphanumeric)
+const normalizeStr = (str: string) => {
+  if (!str) return '';
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, ' ') // Replace non-alphanumeric with space
+    .trim()
+    .replace(/\s+/g, ' '); // Collapse multiple spaces
+};
+
+// Helper to parse numbers from Excel (handles strings with dots/commas)
+const parseExcelNumber = (val: any): number => {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const str = String(val).replace(/\s/g, '');
+  // If it's something like "1.234,56" or "1,234.56"
+  // This is tricky, but usually for base we expect integers or simple floats.
+  // Let's try to remove thousands separators.
+  // If there's both a dot and a comma, the last one is the decimal.
+  const lastDot = str.lastIndexOf('.');
+  const lastComma = str.lastIndexOf(',');
+  
+  if (lastDot > lastComma) {
+    // Dot is decimal, remove commas
+    return parseFloat(str.replace(/,/g, '')) || 0;
+  } else if (lastComma > lastDot) {
+    // Comma is decimal, remove dots, then replace comma with dot
+    return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+  }
+  
+  return parseFloat(str) || 0;
+};
+
+// --- Error Boundary ---
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-20 h-20 bg-red-50 rounded-2xl flex items-center justify-center mb-6">
+            <AlertCircle className="w-10 h-10 text-[#EE1D23]" />
+          </div>
+          <h2 className="text-3xl font-black text-[#333333] uppercase italic tracking-tighter mb-4">Ops! Algo deu errado</h2>
+          <p className="text-slate-500 font-bold max-w-md mb-8">
+            Ocorreu um erro inesperado ao renderizar o dashboard. Tente recarregar a página ou limpar os dados.
+          </p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-4 px-8 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 uppercase italic"
+          >
+            Recarregar Página
+          </button>
+          {this.state.error && (
+            <pre className="mt-8 p-4 bg-slate-100 rounded-xl text-left text-xs text-slate-500 max-w-2xl overflow-auto border border-slate-200">
+              {this.state.error.toString()}
+            </pre>
+          )}
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  // Data State
+  const [baseData, setBaseData] = useState<VisitData[]>([]);
+  const [baseCidadeData, setBaseCidadeData] = useState<BaseCidadeData[]>([]);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook'>('dashboard');
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [isLogLoading, setIsLogLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch logs from Supabase
+  const fetchLogs = async () => {
+    setIsLogLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('diario_de_bordo')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLogEntries(data || []);
+    } catch (err) {
+      console.error('Error fetching logs:', err);
+    } finally {
+      setIsLogLoading(false);
+    }
+  };
+
+  // Scroll to top effect
+  React.useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 400);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Fetch logs when logbook tab is active
+  React.useEffect(() => {
+    if (activeTab === 'logbook') {
+      fetchLogs();
+    }
+  }, [activeTab]);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Filters State
+  const [filters, setFilters] = useState({
+    mes: 'Todos',
+    cidade: ['Todos'] as string[],
+    area: 'Todos',
+    expurgo: 'Todos',
+    tecnologia: 'Todos',
+    grupoBaixa: 'Todos',
+    startDate: '',
+    endDate: ''
+  });
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  const [selectedBaixas, setSelectedBaixas] = useState<string[]>([]);
+
+  // Unique values for filters (Dependent Filters)
+  const filterOptions = useMemo(() => {
+    const getOptions = (key: keyof VisitData, currentFilters: typeof filters) => {
+      const otherFiltersApplied = baseData.filter(item => {
+        const matchMes = key === 'mes' || currentFilters.mes === 'Todos' || item.mes === currentFilters.mes;
+        const matchCidade = key === 'cidade' || currentFilters.cidade.includes('Todos') || currentFilters.cidade.includes(item.cidade);
+        const matchArea = key === 'area' || currentFilters.area === 'Todos' || item.area === currentFilters.area;
+        const matchExpurgo = key === 'expurgo' || currentFilters.expurgo === 'Todos' || 
+          (currentFilters.expurgo === 'Sim' ? item.expurgo : !item.expurgo);
+        const matchTec = key === 'tecnologia' || currentFilters.tecnologia === 'Todos' || item.tecnologia === currentFilters.tecnologia;
+        const matchGrupo = key === 'grupoBaixa' || currentFilters.grupoBaixa === 'Todos' || item.grupoBaixa === currentFilters.grupoBaixa;
+        return matchMes && matchCidade && matchArea && matchExpurgo && matchTec && matchGrupo;
+      });
+      
+      const unique = [...new Set(otherFiltersApplied.map(d => String(d[key])))];
+      return ['Todos', ...(unique as string[]).sort((a, b) => a.localeCompare(b, 'pt-BR'))];
+    };
+
+    return {
+      meses: getOptions('mes', filters),
+      cidades: getOptions('cidade', filters),
+      areas: getOptions('area', filters),
+      expurgos: ['Todos', 'Sim', 'Não'],
+      tecnologias: getOptions('tecnologia', filters),
+      gruposBaixa: getOptions('grupoBaixa', filters)
+    };
+  }, [baseData, filters]);
+
+  // Filtered Data (Base filters from dropdowns)
+  const filteredData = useMemo(() => {
+    return baseData.filter(item => {
+      const matchMes = filters.mes === 'Todos' || item.mes === filters.mes;
+      const matchCidade = filters.cidade.includes('Todos') || filters.cidade.includes(item.cidade);
+      const matchArea = filters.area === 'Todos' || item.area === filters.area;
+      const matchExpurgo = filters.expurgo === 'Todos' || 
+        (filters.expurgo === 'Sim' ? item.expurgo : !item.expurgo);
+      const matchTec = filters.tecnologia === 'Todos' || item.tecnologia === filters.tecnologia;
+      const matchGrupo = filters.grupoBaixa === 'Todos' || item.grupoBaixa === filters.grupoBaixa;
+      
+      const itemDate = new Date(item.fullDate);
+      itemDate.setHours(0, 0, 0, 0);
+      
+      let matchDate = true;
+      if (filters.startDate) {
+        const [y, m, d] = filters.startDate.split('-').map(Number);
+        const start = new Date(y, m - 1, d);
+        start.setHours(0, 0, 0, 0);
+        matchDate = matchDate && itemDate >= start;
+      }
+      if (filters.endDate) {
+        const [y, m, d] = filters.endDate.split('-').map(Number);
+        const end = new Date(y, m - 1, d);
+        end.setHours(0, 0, 0, 0);
+        matchDate = matchDate && itemDate <= end;
+      }
+      
+      return matchMes && matchCidade && matchArea && matchExpurgo && matchTec && matchGrupo && matchDate;
+    });
+  }, [filters, baseData]);
+
+  // Data for Node Chart (Filtered by dropdowns + Selected Baixas)
+  const nodeChartData = useMemo(() => {
+    if (selectedBaixas.length === 0) return filteredData;
+    return filteredData.filter(item => selectedBaixas.includes(item.cdBaixa));
+  }, [filteredData, selectedBaixas]);
+
+  // Data for Baixa Chart (Filtered by dropdowns + Selected Nodes)
+  const baixaChartData = useMemo(() => {
+    if (selectedNodes.length === 0) return filteredData;
+    return filteredData.filter(item => selectedNodes.includes(item.node));
+  }, [filteredData, selectedNodes]);
+
+  // Final Filtered Data (For Metrics - includes all filters)
+  const finalFilteredData = useMemo(() => {
+    let data = filteredData;
+    if (selectedNodes.length > 0) data = data.filter(item => selectedNodes.includes(item.node));
+    if (selectedBaixas.length > 0) data = data.filter(item => selectedBaixas.includes(item.cdBaixa));
+    return data;
+  }, [filteredData, selectedNodes, selectedBaixas]);
+
+  // Metrics Calculations (Uses finalFilteredData)
+  const metrics = useMemo(() => {
+    const total = finalFilteredData.length;
+    const executada = finalFilteredData.filter(d => d.status === 'Executada').length;
+    const cancelada = finalFilteredData.filter(d => d.status === 'Cancelada').length;
+    
+    // 1. Quality Score (Original AT1 Average 0-10)
+    const calculateAvg = (data: VisitData[]) => {
+      const validNotes = data.filter(d => d.status === 'Executada' && d.notaAT1 > 0);
+      if (validNotes.length === 0) return 0;
+      return validNotes.reduce((acc, curr) => acc + curr.notaAT1, 0) / validNotes.length;
+    };
+
+    // 2. Projection Calculation Logic (%) - Strictly following user rules
+    const calculateProjectionDetails = (data: VisitData[], techOverride?: Technology) => {
+      // OS_EXECUTADAS
+      const osExec = data.filter(d => d.status === 'Executada').length;
+      
+      // DIAS_TRABALHADOS (Distinct dates in DATA_NOTA)
+      const uniqueDates = new Set(data.map(d => d.fullDate instanceof Date ? d.fullDate.toDateString() : ''));
+      uniqueDates.delete('');
+      const diasTrab = uniqueDates.size || 1;
+
+      // DIAS_DO_MES
+      // Use reference date from data if available, otherwise current month
+      const referenceDate = (data.length > 0 && data[0].fullDate instanceof Date) ? data[0].fullDate : new Date();
+      const year = referenceDate.getFullYear();
+      const month = referenceDate.getMonth();
+      const diasMes = new Date(year, month + 1, 0).getDate();
+
+      // BASE_CLIENTES (Sum of bases for filtered cities/techs)
+      let baseClientes = 0;
+      
+      // Determine which cities to include for base calculation
+      const cityFilter = filters.cidade;
+      const techFilter = techOverride || filters.tecnologia;
+
+      // Normalize for comparison
+      const normCityFilters = cityFilter.map(c => normalizeStr(c));
+      const normTechFilter = normalizeStr(techFilter);
+
+      // We sum the base from baseCidadeData matching the current filters
+      const isTodos = cityFilter.includes('Todos');
+      
+      baseCidadeData.forEach(b => {
+        const normBCidade = normalizeStr(b.cidade);
+        const normBTech = normalizeStr(b.tecnologia);
+
+        // If "Todos", we must avoid double counting sub-totals or total rows
+        if (isTodos) {
+          const isTotalOrRegional = 
+            normBCidade.includes('TOTAL') || 
+            normBCidade.includes('GERAL') || 
+            normBCidade.includes('SUM') ||
+            normBCidade === 'NORTE' || 
+            normBCidade === 'SUL' || 
+            normBCidade === 'LESTE' || 
+            normBCidade === 'OESTE' ||
+            normBCidade === 'REGIONAL';
+          
+          if (isTotalOrRegional) return;
+        }
+
+        // Fuzzy match: either exact match or one contains the other
+        const cityMatch = isTodos || normCityFilters.some(cf => 
+          normBCidade === cf || normBCidade.includes(cf) || cf.includes(normBCidade)
+        );
+        
+        const techMatch = techFilter === 'Todos' || normBTech === normTechFilter;
+        
+        if (cityMatch && techMatch) {
+          baseClientes += b.base;
+        }
+      });
+
+      // Formula 3: PROJEÇÃO_OS (AT1) = OS_EXECUTADAS / DIAS_TRABALHADOS * DIAS_DO_MES
+      const projOsAT1 = (osExec / diasTrab) * diasMes;
+      const at1 = baseClientes > 0 ? (projOsAT1 / baseClientes) * 100 : 0;
+
+      // Formula 3: PROJEÇÃO_OS (G1) = TOTAL_VISITAS / DIAS_TRABALHADOS * DIAS_DO_MES
+      const totalVisits = data.length;
+      const projOsG1 = (totalVisits / diasTrab) * diasMes;
+      const g1 = baseClientes > 0 ? (projOsG1 / baseClientes) * 100 : 0;
+
+      return { osExec, totalVisits, diasTrab, projOsAT1, projOsG1, base: baseClientes, at1, g1, diasMes };
+    };
+
+    const totalDetails = calculateProjectionDetails(finalFilteredData);
+    const hfcDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HFC'), 'HFC');
+    const gponDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'GPON'), 'GPON');
+    const hibridoDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HÍBRIDO'), 'HÍBRIDO');
+    const outrosDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'OUTROS'), 'OUTROS');
+
+    return {
+      total,
+      executada,
+      cancelada,
+      avgQualityTotal: calculateAvg(finalFilteredData),
+      projAT1Total: totalDetails.at1,
+      projG1Total: totalDetails.g1,
+      details: totalDetails,
+      techDetails: {
+        HFC: hfcDetails,
+        GPON: gponDetails,
+        HÍBRIDO: hibridoDetails,
+        OUTROS: outrosDetails
+      }
+    };
+  }, [finalFilteredData, baseCidadeData, filters]);
+
+  const lastUpdateDate = useMemo(() => {
+    if (baseData.length === 0) return null;
+    const dates = baseData.map(d => d.fullDate instanceof Date ? d.fullDate.getTime() : 0).filter(t => t > 0);
+    if (dates.length === 0) return null;
+    return new Date(Math.max(...dates));
+  }, [baseData]);
+
+  const chartData = [
+    { name: 'HFC', g1: metrics.techDetails.HFC.g1, at1: metrics.techDetails.HFC.at1 },
+    { name: 'GPON', g1: metrics.techDetails.GPON.g1, at1: metrics.techDetails.GPON.at1 },
+    { name: 'HÍBRIDO', g1: metrics.techDetails.HÍBRIDO.g1, at1: metrics.techDetails.HÍBRIDO.at1 },
+    { name: 'OUTROS', g1: metrics.techDetails.OUTROS.g1, at1: metrics.techDetails.OUTROS.at1 },
+  ];
+
+  // Daily Volume Data
+  const dailyVolume = useMemo(() => {
+    const dayMap: Record<string, number> = {};
+    
+    // Determine the range of days to show
+    let daysToShow: string[] = [];
+    
+    const getDayKey = (date: Date) => {
+      const d = date.getDate().toString().padStart(2, '0');
+      const m = (date.getMonth() + 1).toString().padStart(2, '0');
+      return `${d}/${m}`;
+    };
+
+    if (filters.mes !== 'Todos') {
+      // Find a reference date from the data to get the year
+      // If no data for this specific filter, try to find any date in the baseData
+      const refDate = finalFilteredData.find(d => d.fullDate instanceof Date && !isNaN(d.fullDate.getTime()))?.fullDate || 
+                      baseData.find(d => d.fullDate instanceof Date && !isNaN(d.fullDate.getTime()))?.fullDate ||
+                      new Date();
+
+      const year = refDate.getFullYear();
+      const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+      const monthIndex = months.indexOf(filters.mes);
+      
+      if (monthIndex !== -1) {
+        const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+        for (let d = 1; d <= lastDay; d++) {
+          daysToShow.push(String(d));
+        }
+      }
+    } else if (filters.startDate || filters.endDate || finalFilteredData.length > 0) {
+      // If no specific month, use the range from filters or data
+      let minDate: Date;
+      let maxDate: Date;
+
+      if (filters.startDate) {
+        minDate = new Date(filters.startDate + 'T00:00:00');
+      } else if (finalFilteredData.length > 0) {
+        const dates = finalFilteredData
+          .map(d => d.fullDate instanceof Date ? d.fullDate.getTime() : 0)
+          .filter(t => t > 0);
+        minDate = dates.length > 0 ? new Date(Math.min(...dates)) : new Date();
+      } else {
+        minDate = new Date();
+      }
+
+      if (filters.endDate) {
+        maxDate = new Date(filters.endDate + 'T00:00:00');
+      } else if (finalFilteredData.length > 0) {
+        const dates = finalFilteredData
+          .map(d => d.fullDate instanceof Date ? d.fullDate.getTime() : 0)
+          .filter(t => t > 0);
+        maxDate = dates.length > 0 ? new Date(Math.max(...dates)) : new Date();
+      } else {
+        maxDate = new Date();
+      }
+      
+      let current = new Date(minDate);
+      current.setHours(0,0,0,0);
+      const end = new Date(maxDate);
+      end.setHours(0,0,0,0);
+      
+      // Limit to 62 days to prevent performance issues if range is too large
+      let count = 0;
+      while (current <= end && count < 62) {
+        daysToShow.push(getDayKey(current));
+        current.setDate(current.getDate() + 1);
+        count++;
+      }
+    }
+
+    // Initialize all days with 0
+    daysToShow.forEach(day => {
+      dayMap[day] = 0;
+    });
+
+    // Fill with actual data
+    finalFilteredData.forEach(item => {
+      if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
+        let dayKey = '';
+        if (filters.mes !== 'Todos') {
+          dayKey = String(item.fullDate.getDate());
+        } else {
+          dayKey = getDayKey(item.fullDate);
+        }
+        
+        if (dayMap[dayKey] !== undefined) {
+          dayMap[dayKey] += 1;
+        }
+      }
+    });
+
+    return Object.entries(dayMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => {
+        if (filters.mes !== 'Todos') {
+          return Number(a.name) - Number(b.name);
+        }
+        const [dayA, monthA] = a.name.split('/').map(Number);
+        const [dayB, monthB] = b.name.split('/').map(Number);
+        if (monthA !== monthB) return monthA - monthB;
+        return dayA - dayB;
+      });
+  }, [finalFilteredData, baseData, filters]);
+
+  // Weekly Volume Data
+  const weeklyVolume = useMemo(() => {
+    const weekMap: Record<string, number> = {
+      'S1': 0,
+      'S2': 0,
+      'S3': 0,
+      'S4': 0,
+      'S5': 0
+    };
+
+    finalFilteredData.forEach(item => {
+      if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
+        const day = item.fullDate.getDate();
+        if (day <= 7) weekMap['S1'] += 1;
+        else if (day <= 14) weekMap['S2'] += 1;
+        else if (day <= 21) weekMap['S3'] += 1;
+        else if (day <= 28) weekMap['S4'] += 1;
+        else weekMap['S5'] += 1;
+      }
+    });
+
+    return Object.entries(weekMap).map(([name, value]) => ({ name, value }));
+  }, [finalFilteredData]);
+
+  // Top 15 Offending Nodes (Uses nodeChartData)
+  const topNodes = useMemo(() => {
+    const nodeCounts: Record<string, number> = {};
+    nodeChartData.forEach(item => {
+      if (item.node && item.node !== 'N/A') {
+        nodeCounts[item.node] = (nodeCounts[item.node] || 0) + 1;
+      }
+    });
+
+    const allNodes = Object.entries(nodeCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    
+    let result = allNodes.slice(0, 15);
+    
+    // Ensure selected nodes are included
+    selectedNodes.forEach(selNode => {
+      if (!result.find(n => n.name === selNode)) {
+        const found = allNodes.find(n => n.name === selNode);
+        if (found) result.push(found);
+      }
+    });
+
+    return result.sort((a, b) => b.value - a.value);
+  }, [nodeChartData, selectedNodes]);
+
+  // Top 20 Low Codes (CD_BAIXA) (Uses baixaChartData)
+  const topBaixas = useMemo(() => {
+    const baixaCounts: Record<string, number> = {};
+    baixaChartData.forEach(item => {
+      if (item.cdBaixa && item.cdBaixa !== 'N/A') {
+        baixaCounts[item.cdBaixa] = (baixaCounts[item.cdBaixa] || 0) + 1;
+      }
+    });
+
+    const allBaixas = Object.entries(baixaCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    
+    let result = allBaixas.slice(0, 20);
+    
+    // Ensure selected baixas are included
+    selectedBaixas.forEach(selBaixa => {
+      if (!result.find(n => n.name === selBaixa)) {
+        const found = allBaixas.find(n => n.name === selBaixa);
+        if (found) result.push(found);
+      }
+    });
+
+    return result.sort((a, b) => b.value - a.value);
+  }, [baixaChartData, selectedBaixas]);
+
+  // Volume por Área
+  const areaData = useMemo(() => {
+    const areaMap: Record<string, number> = {};
+    finalFilteredData.forEach(item => {
+      if (item.area && item.area !== 'N/A') {
+        areaMap[item.area] = (areaMap[item.area] || 0) + 1;
+      }
+    });
+    return Object.entries(areaMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [finalFilteredData]);
+
+  // Volume por Grupo de Baixa
+  const grupoBaixaData = useMemo(() => {
+    const grupoMap: Record<string, number> = {};
+    finalFilteredData.forEach(item => {
+      if (item.grupoBaixa && item.grupoBaixa !== 'N/A') {
+        grupoMap[item.grupoBaixa] = (grupoMap[item.grupoBaixa] || 0) + 1;
+      }
+    });
+    return Object.entries(grupoMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [finalFilteredData]);
+
+  // Base Data Aggregations for Charts
+  const baseMetrics = useMemo(() => {
+    const cityMap: Record<string, number> = {};
+    const techMap: Record<string, number> = { 'HFC': 0, 'GPON': 0, 'HÍBRIDO': 0, 'OUTROS': 0 };
+
+    const normCityFilters = filters.cidade.map(c => normalizeStr(c));
+    const normTechFilter = normalizeStr(filters.tecnologia);
+
+    const isTodos = filters.cidade.includes('Todos');
+
+    baseCidadeData.forEach(item => {
+      const normCity = normalizeStr(item.cidade);
+      const normTech = normalizeStr(item.tecnologia);
+
+      // If "Todos", exclude total/regional rows from charts and aggregations
+      if (isTodos) {
+        const isTotalOrRegional = 
+          normCity.includes('TOTAL') || 
+          normCity.includes('GERAL') || 
+          normCity.includes('SUM') ||
+          normCity === 'NORTE' || 
+          normCity === 'SUL' || 
+          normCity === 'LESTE' || 
+          normCity === 'OESTE' ||
+          normCity === 'REGIONAL';
+        
+        if (isTotalOrRegional) return;
+      }
+
+      const matchCity = isTodos || normCityFilters.some(cf => 
+        normCity === cf || normCity.includes(cf) || cf.includes(normCity)
+      );
+      
+      const matchTech = filters.tecnologia === 'Todos' || normTech === normTechFilter;
+
+      if (matchCity && matchTech) {
+        cityMap[item.cidade] = (cityMap[item.cidade] || 0) + item.base;
+        techMap[item.tecnologia] = (techMap[item.tecnologia] || 0) + item.base;
+      }
+    });
+
+    const cityData = Object.entries(cityMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    const totalBase = Object.values(techMap).reduce((acc, curr) => acc + curr, 0);
+    const techData = Object.entries(techMap)
+      .map(([name, value]) => ({ 
+        name, 
+        value,
+        percentage: totalBase > 0 ? (value / totalBase) * 100 : 0
+      }));
+
+    if (totalBase > 0) {
+      techData.push({
+        name: 'TOTAL',
+        value: totalBase,
+        percentage: 100
+      });
+    }
+
+    return { cityData, techData };
+  }, [baseCidadeData, filters]);
+
+  const COLORS = [CLARO_RED, '#666666', '#999999'];
+
+  // Excel Import Handler
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportProgress(0);
+    setImportError(null);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        
+        // 1. Read Main Data
+        const analiticoSheetName = wb.SheetNames.find(name => {
+          const n = normalizeStr(name);
+          return n.includes('ANALITICO') || n.includes('VISITAS') || n.includes('DADOS') || n.includes('GERAL');
+        }) || wb.SheetNames.find(name => !normalizeStr(name).includes('BASE')) || wb.SheetNames[0];
+        
+        const ws = wb.Sheets[analiticoSheetName];
+        const rawRows = XLSX.utils.sheet_to_json(ws) as any[];
+
+        if (rawRows.length === 0) {
+          setIsImporting(false);
+          setImportError("Arquivo vazio ou sem dados válidos.");
+          return;
+        }
+
+        setImportProgress(5);
+
+        // 2. Read BASE Data
+        const baseCidadeSheetName = wb.SheetNames.find(name => {
+          const n = normalizeStr(name);
+          return n === 'BASE' || n.includes('BASE') || n.includes('REFERENCIA') || n.includes('METAS') || n.includes('CIDADE');
+        });
+        
+        let importedBaseCidade: BaseCidadeData[] = [];
+        if (baseCidadeSheetName) {
+          const wsBase = wb.Sheets[baseCidadeSheetName];
+          const baseRawData = XLSX.utils.sheet_to_json(wsBase, { header: 1 }) as any[][];
+          
+          let headerRowIndex = -1;
+          for (let i = 0; i < Math.min(baseRawData.length, 20); i++) {
+            const row = baseRawData[i];
+            if (row && row.some(cell => {
+              const s = normalizeStr(String(cell || ''));
+              return s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE' || s === 'BASE';
+            })) {
+              headerRowIndex = i;
+              break;
+            }
+          }
+
+          const startIdx = headerRowIndex === -1 ? 0 : headerRowIndex + 1;
+          const headerRow = headerRowIndex === -1 ? [] : baseRawData[headerRowIndex];
+
+          let colIdxCidade = 0;
+          let colIdxHFC = 2;
+          let colIdxGPON = 3;
+          let colIdxHibrido = 4;
+          let colIdxOutros = 5;
+
+          if (headerRow.length > 0) {
+            headerRow.forEach((cell, idx) => {
+              const s = normalizeStr(String(cell || ''));
+              if (s === 'CIDADE' || s === 'MUNICIPIO' || s === 'LOCALIDADE') colIdxCidade = idx;
+              if (s.includes('HFC')) colIdxHFC = idx;
+              if (s.includes('GPON') || s.includes('FIBRA') || s.includes('G PON')) colIdxGPON = idx;
+              if (s.includes('HIBRID') || s.includes('HIBRIDO')) colIdxHibrido = idx;
+              if (s.includes('OUTRO') || s.includes('OUTRA')) colIdxOutros = idx;
+            });
+          }
+
+          importedBaseCidade = baseRawData.slice(startIdx).flatMap((row) => {
+            if (!row || row.length <= Math.max(colIdxCidade, colIdxHFC, colIdxGPON, colIdxHibrido, colIdxOutros)) {
+              if (row && row[colIdxCidade]) {
+                const cidade = String(row[colIdxCidade]).trim();
+                if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
+                return [
+                  { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
+                  { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
+                  { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
+                  { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
+                ];
+              }
+              return [];
+            }
+            const cidade = String(row[colIdxCidade] || '').trim();
+            if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
+            return [
+              { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
+              { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
+              { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
+              { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
+            ];
+          });
+        }
+
+        // 3. Process Main Data in Chunks
+        const mappedData: VisitData[] = [];
+        const chunkSize = 1000;
+        let currentIndex = 0;
+
+        const processChunk = () => {
+          const end = Math.min(currentIndex + chunkSize, rawRows.length);
+          for (let i = currentIndex; i < end; i++) {
+            const row = rawRows[i];
+            
+            let mesValue = 'N/A';
+            let fullDateValue = new Date();
+            const rawDate = row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
+            
+            if (rawDate) {
+              let date: Date;
+              if (rawDate instanceof Date) {
+                date = rawDate;
+              } else if (typeof rawDate === 'number') {
+                date = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+              } else {
+                date = new Date(rawDate);
+              }
+
+              if (!isNaN(date.getTime())) {
+                // Ensure we use the UTC components to create a local date at 00:00:00
+                // This handles the case where Excel dates are interpreted as UTC
+                const year = date.getUTCFullYear();
+                const month = date.getUTCMonth();
+                const day = date.getUTCDate();
+                fullDateValue = new Date(year, month, day);
+                
+                const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+                mesValue = months[fullDateValue.getMonth()];
+              }
+            }
+
+            let techValue = String(row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
+            if (techValue.includes('HIBRID') || techValue.includes('HÍBRID')) techValue = 'HÍBRIDO';
+            else if (techValue.includes('GPON') || techValue.includes('FIBRA') || techValue.includes('FTTH')) techValue = 'GPON';
+            else if (techValue.includes('HFC') || techValue.includes('COAXIAL') || techValue.includes('CABO')) techValue = 'HFC';
+            else techValue = 'HFC';
+
+            const nota = Number(row.NOTA_AT1 || row.nota_at1 || row.NOTA || row.AT1 || row.notaAT1 || row.NOTA_FINAL || row.PONTUACAO || row.SCORE || 0);
+            
+            const rawStatus = String(row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
+            let statusValue: 'Executada' | 'Cancelada' = 'Cancelada';
+            if (rawStatus.includes('EXEC') || rawStatus.includes('CONCLU') || rawStatus.includes('FINALIZ') || rawStatus.includes('ENCERRADA') || rawStatus.includes('REALIZADA') || rawStatus.includes('OK') || rawStatus.includes('FECHADA') || nota > 0) {
+              statusValue = 'Executada';
+            }
+
+            mappedData.push({
+              id: `import-${i}`,
+              mes: mesValue,
+              fullDate: fullDateValue,
+              cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
+              area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
+              expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
+              tecnologia: techValue as Technology,
+              status: statusValue,
+              notaAT1: nota,
+              node: String(row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
+              cdBaixa: String(row.CD_BAIXA || row.cd_baixa || row.BAIXA || row.COD_BAIXA || 'N/A').trim(),
+              grupoBaixa: String(row['GRUPO BAIXA'] || row.GRUPO_BAIXA || row.grupo_baixa || row.GRUPO || 'N/A').trim()
+            });
+          }
+
+          currentIndex = end;
+          const progress = Math.max(5, Math.min(99, Math.round((currentIndex / rawRows.length) * 100)));
+          setImportProgress(progress);
+
+          if (currentIndex < rawRows.length) {
+            setTimeout(processChunk, 0);
+          } else {
+            // Processing complete
+            setImportProgress(100);
+            if (mappedData.length > 0) {
+              setBaseData(mappedData);
+              if (importedBaseCidade.length > 0) {
+                setBaseCidadeData(importedBaseCidade);
+              }
+              setFilters({
+                mes: 'Todos',
+                cidade: ['Todos'],
+                area: 'Todos',
+                expurgo: 'Todos',
+                tecnologia: 'Todos',
+                grupoBaixa: 'Todos',
+                startDate: '',
+                endDate: ''
+              });
+            } else {
+              setImportError('O arquivo parece estar vazio ou em formato inválido.');
+            }
+            setIsImporting(false);
+          }
+        };
+
+        processChunk();
+
+      } catch (err) {
+        setImportError('Erro ao processar o arquivo Excel. Verifique o formato.');
+        setIsImporting(false);
+        console.error(err);
+      }
+    };
+    reader.onerror = () => {
+      setImportError('Erro ao ler o arquivo.');
+      setIsImporting(false);
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  return (
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[#F5F5F5] text-[#333333] font-sans p-4 md:p-8">
+      {/* Header */}
+      <header className="max-w-7xl mx-auto mb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-[#EE1D23] rounded-2xl flex items-center justify-center shadow-xl shadow-red-500/20 relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <Signal className="text-white/30 w-10 h-10 absolute -bottom-2 -right-2 rotate-12" />
+              <Wrench className="text-white w-7 h-7 relative z-10 drop-shadow-md" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-black tracking-tighter text-[#EE1D23] uppercase italic leading-none">Dashboard AT1 - G1</h1>
+              <p className="text-slate-500 font-bold text-xs mt-1 uppercase tracking-widest opacity-80">Manutenção & Performance Técnica</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+              accept=".xlsx, .xls" 
+              className="hidden" 
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 bg-white hover:bg-slate-50 text-[#EE1D23] font-bold py-2.5 px-6 rounded-full border-2 border-[#EE1D23] transition-all shadow-sm active:scale-95"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Importar Excel</span>
+            </button>
+            {baseData.length > 0 && (
+              <button 
+                onClick={() => {
+                  setBaseData([]);
+                  setBaseCidadeData([]);
+                }}
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-2.5 px-6 rounded-full transition-all shadow-sm active:scale-95"
+              >
+                <Trash className="w-4 h-4" />
+                <span>Limpar</span>
+              </button>
+            )}
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-white px-4 py-2.5 rounded-full shadow-sm border border-slate-200">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>
+                {lastUpdateDate 
+                  ? `Atualizado até ${lastUpdateDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}` 
+                  : new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {importError && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-red-600 text-sm font-medium"
+          >
+            <AlertCircle className="w-4 h-4" />
+            {importError}
+          </motion.div>
+        )}
+      </header>
+
+      {/* Tab Navigation */}
+      <div className="max-w-7xl mx-auto mb-8 flex gap-4">
+        <button
+          onClick={() => setActiveTab('dashboard')}
+          className={cn(
+            "flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase italic transition-all active:scale-95",
+            activeTab === 'dashboard' 
+              ? "bg-[#EE1D23] text-white shadow-lg shadow-red-500/30" 
+              : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+          )}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Dashboard
+        </button>
+        <button
+          onClick={() => setActiveTab('logbook')}
+          className={cn(
+            "flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase italic transition-all active:scale-95",
+            activeTab === 'logbook' 
+              ? "bg-[#EE1D23] text-white shadow-lg shadow-red-500/30" 
+              : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+          )}
+        >
+          <BookOpen className="w-4 h-4" />
+          Diário de Bordo
+        </button>
+      </div>
+
+      {activeTab === 'dashboard' ? (
+        <>
+          {isImporting && (
+        <div className="fixed inset-0 z-[100] bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center p-6">
+          <div className="w-full max-w-md bg-white p-8 rounded-[32px] shadow-2xl border border-slate-100 text-center">
+            <div className="w-20 h-20 bg-red-50 rounded-2xl flex items-center justify-center mb-6 mx-auto animate-pulse">
+              <FileSpreadsheet className="w-10 h-10 text-[#EE1D23]" />
+            </div>
+            <h3 className="text-2xl font-black text-[#333333] uppercase italic tracking-tighter mb-2">Importando Dados</h3>
+            <p className="text-slate-500 font-bold mb-8 italic">Processando arquivo analítico...</p>
+            
+            <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden mb-4">
+              <div 
+                className="h-full bg-[#EE1D23] transition-all duration-300 ease-out"
+                style={{ width: `${importProgress}%` }}
+              />
+            </div>
+            <div className="flex justify-between items-center px-1">
+              <span className="text-xs font-black text-[#EE1D23] uppercase tracking-widest">{importProgress}%</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Aguarde...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {baseData.length === 0 ? (
+        <section className="max-w-4xl mx-auto mt-20">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white p-12 rounded-[40px] shadow-2xl border border-slate-100 text-center flex flex-col items-center"
+          >
+            <div className="w-24 h-24 bg-red-50 rounded-3xl flex items-center justify-center mb-8">
+              <FileSpreadsheet className="w-12 h-12 text-[#EE1D23]" />
+            </div>
+            <h2 className="text-4xl font-black text-[#333333] uppercase italic tracking-tighter mb-4">
+              Bem-vindo ao Dashboard AT1 - G1
+            </h2>
+            <p className="text-slate-500 font-bold text-lg max-w-md mb-10">
+              Para começar, importe o arquivo Excel com os dados de visitas técnicas e base de clientes.
+            </p>
+            
+            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-8 w-full border-t border-slate-100 pt-12">
+              <div className="flex flex-col items-center">
+                <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center mb-3">
+                  <BarChart3 className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Volume Diário</p>
+              </div>
+              <div className="flex flex-col items-center">
+                <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center mb-3">
+                  <Activity className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Performance G1</p>
+              </div>
+              <div className="flex flex-col items-center">
+                <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center mb-3">
+                  <MapPin className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Visão por Cidade</p>
+              </div>
+            </div>
+          </motion.div>
+        </section>
+      ) : (
+        <>
+          {/* Filters Bar */}
+          <section className="max-w-7xl mx-auto mb-8">
+        <div className="bg-white p-6 rounded-2xl shadow-md border-t-4 border-[#EE1D23]">
+          <div className="flex items-center gap-2 mb-6 text-[#333333] font-black uppercase italic tracking-tight">
+            <Filter className="w-4 h-4 text-[#EE1D23]" />
+            <h2>Filtros de Pesquisa</h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <FilterSelect 
+              label="Mês" 
+              icon={<Calendar className="w-3.5 h-3.5" />}
+              value={filters.mes}
+              options={filterOptions.meses}
+              onChange={(v) => setFilters(f => ({ ...f, mes: v }))}
+            />
+            <MultiFilterSelect 
+              label="Cidade" 
+              icon={<MapPin className="w-3.5 h-3.5" />}
+              value={filters.cidade}
+              options={filterOptions.cidades}
+              onChange={(v) => setFilters(f => ({ ...f, cidade: v }))}
+            />
+            <FilterSelect 
+              label="Área" 
+              icon={<Activity className="w-3.5 h-3.5" />}
+              value={filters.area}
+              options={filterOptions.areas}
+              onChange={(v) => setFilters(f => ({ ...f, area: v }))}
+            />
+            <FilterSelect 
+              label="Expurgo" 
+              icon={<Trash className="w-3.5 h-3.5" />}
+              value={filters.expurgo}
+              options={filterOptions.expurgos}
+              onChange={(v) => setFilters(f => ({ ...f, expurgo: v }))}
+            />
+            <FilterSelect 
+              label="Tecnologia" 
+              icon={<Cpu className="w-3.5 h-3.5" />}
+              value={filters.tecnologia}
+              options={filterOptions.tecnologias}
+              onChange={(v) => setFilters(f => ({ ...f, tecnologia: v }))}
+            />
+            <FilterSelect 
+              label="Grupo de Baixa" 
+              icon={<Filter className="w-3.5 h-3.5" />}
+              value={filters.grupoBaixa}
+              options={filterOptions.gruposBaixa}
+              onChange={(v) => setFilters(f => ({ ...f, grupoBaixa: v }))}
+            />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Início</label>
+              <input 
+                type="date" 
+                value={filters.startDate}
+                onChange={(e) => setFilters(f => ({ ...f, startDate: e.target.value }))}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-[#EE1D23] focus:border-transparent outline-none transition-all"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Fim</label>
+              <input 
+                type="date" 
+                value={filters.endDate}
+                onChange={(e) => setFilters(f => ({ ...f, endDate: e.target.value }))}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-[#EE1D23] focus:border-transparent outline-none transition-all"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto space-y-8">
+        {/* Volume Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <MetricCard 
+            title="Total de Visitas" 
+            value={metrics.total} 
+            icon={<BarChart3 />}
+            color="dark"
+          />
+          <MetricCard 
+            title="Visitas Executadas" 
+            value={metrics.executada} 
+            icon={<CheckCircle2 />}
+            color="red"
+            percentage={metrics.total > 0 ? (metrics.executada / metrics.total) * 100 : 0}
+          />
+          <MetricCard 
+            title="Visitas Canceladas" 
+            value={metrics.cancelada} 
+            icon={<XCircle />}
+            color="gray"
+            percentage={metrics.total > 0 ? (metrics.cancelada / metrics.total) * 100 : 0}
+          />
+        </div>
+
+        {/* G1 Scores */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-12">
+          {/* G1 Quality Gauge */}
+          <div className="lg:col-span-1 bg-white p-8 rounded-3xl shadow-md border border-slate-100 flex flex-col items-center justify-center text-center">
+            <h3 className="text-[#EE1D23] font-black uppercase italic mb-6 tracking-tight">Nota G1</h3>
+            <div className="relative flex items-center justify-center">
+              <svg className="w-44 h-44">
+                <circle
+                  className="text-slate-100"
+                  strokeWidth="12"
+                  stroke="currentColor"
+                  fill="transparent"
+                  r="75"
+                  cx="88"
+                  cy="88"
+                />
+                <circle
+                  className="text-[#EE1D23] transition-all duration-1000 ease-out"
+                  strokeWidth="12"
+                  strokeDasharray={471}
+                  strokeDashoffset={471 - (471 * Math.min(metrics.projG1Total, 100)) / 100}
+                  strokeLinecap="round"
+                  stroke="currentColor"
+                  fill="transparent"
+                  r="75"
+                  cx="88"
+                  cy="88"
+                  transform="rotate(-90 88 88)"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-black text-[#333333]">{metrics.projG1Total.toFixed(2)}%</span>
+                <span className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">G1 Projetado</span>
+              </div>
+            </div>
+            <div className="mt-6 w-full text-left space-y-1">
+              <div className="flex justify-between text-[10px] font-bold">
+                <span className="text-slate-400 uppercase">Média Qualidade:</span>
+                <span className="text-[#333333]">{metrics.avgQualityTotal.toFixed(1)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Projection Gauge */}
+          <div className="lg:col-span-1 bg-white p-8 rounded-3xl shadow-md border border-slate-100 flex flex-col items-center justify-center text-center">
+            <h3 className="text-slate-600 font-black uppercase italic mb-6 tracking-tight">AT1 Projetado (%)</h3>
+            <div className="relative flex items-center justify-center">
+              <svg className="w-44 h-44">
+                <circle
+                  className="text-slate-100"
+                  strokeWidth="12"
+                  stroke="currentColor"
+                  fill="transparent"
+                  r="75"
+                  cx="88"
+                  cy="88"
+                />
+                <circle
+                  className="text-slate-600 transition-all duration-1000 ease-out"
+                  strokeWidth="12"
+                  strokeDasharray={471}
+                  strokeDashoffset={471 - (471 * Math.min(metrics.projAT1Total, 100)) / 100}
+                  strokeLinecap="round"
+                  stroke="currentColor"
+                  fill="transparent"
+                  r="75"
+                  cx="88"
+                  cy="88"
+                  transform="rotate(-90 88 88)"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-black text-[#333333]">{metrics.projAT1Total.toFixed(2)}%</span>
+                <span className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Projetado AT1</span>
+              </div>
+            </div>
+            
+            <div className="mt-6 w-full text-left space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <div className="flex justify-between text-[9px] font-black uppercase tracking-tighter">
+                <span className="text-slate-400">Dias Trab:</span>
+                <span className="text-[#333333]">{metrics.details.diasTrab} / {metrics.details.diasMes}</span>
+              </div>
+              <div className="flex justify-between text-[9px] font-black uppercase tracking-tighter">
+                <span className="text-slate-400">Proj OS:</span>
+                <span className="text-[#333333]">{metrics.details.projOsAT1.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between text-[9px] font-black uppercase tracking-tighter">
+                <span className="text-slate-400">Base:</span>
+                <span className="text-[#333333]">{metrics.details.base.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Projection Summary Card - Explicitly requested values */}
+          <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                <Calculator className="w-5 h-5 text-slate-600" />
+              </div>
+              <div className="flex flex-col">
+                <h3 className="text-slate-600 font-black uppercase italic tracking-tight">Resumo de Projeção</h3>
+                {baseCidadeData.length > 0 && (
+                  <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 uppercase">
+                    <CheckCircle2 className="w-2.5 h-2.5" />
+                    <span>
+                      {`Base: ${Math.round(baseCidadeData.length / 3)} cidades importadas`}
+                    </span>
+                  </div>
+                )}
+                {metrics.details.base === 0 && !filters.cidade.includes('Todos') && (
+                  <div className="flex items-center gap-1 text-[9px] font-bold text-red-500 uppercase mt-0.5">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    <span>Cidade não encontrada na base</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">OS Executadas</p>
+                <p className="text-2xl font-black text-[#333333]">{metrics.details.osExec}</p>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Visitas</p>
+                <p className="text-2xl font-black text-[#333333]">{metrics.details.totalVisits}</p>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Dias Trabalhados</p>
+                <p className="text-2xl font-black text-[#333333]">{metrics.details.diasTrab}</p>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Dias do Mês</p>
+                <p className="text-2xl font-black text-[#333333]">{metrics.details.diasMes}</p>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Base de Clientes</p>
+                <p className="text-2xl font-black text-[#333333]">{metrics.details.base.toLocaleString()}</p>
+              </div>
+              <div className="bg-[#EE1D23]/5 p-4 rounded-2xl border border-[#EE1D23]/10">
+                <p className="text-[10px] font-black text-[#EE1D23] uppercase tracking-widest mb-1">AT1 Projetado</p>
+                <p className="text-2xl font-black text-[#EE1D23]">{metrics.projAT1Total.toFixed(2)}%</p>
+              </div>
+              <div className="bg-[#EE1D23]/5 p-4 rounded-2xl border border-[#EE1D23]/10">
+                <p className="text-[10px] font-black text-[#EE1D23] uppercase tracking-widest mb-1">G1 Projetado</p>
+                <p className="text-2xl font-black text-[#EE1D23]">{metrics.projG1Total.toFixed(2)}%</p>
+              </div>
+            </div>
+            
+            <div className="mt-6 p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <p className="text-[9px] font-bold text-slate-500 italic">
+                * Cálculo G1: ({metrics.details.totalVisits} / {metrics.details.diasTrab} * {metrics.details.diasMes}) / {metrics.details.base} * 100
+              </p>
+              <p className="text-[9px] font-bold text-slate-500 italic mt-1">
+                * Cálculo AT1: ({metrics.details.osExec} / {metrics.details.diasTrab} * {metrics.details.diasMes}) / {metrics.details.base} * 100
+              </p>
+            </div>
+          </div>
+
+          {/* Daily Volume Chart */}
+          <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                  <Activity className="w-5 h-5 text-[#EE1D23]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Volume Diário</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Visitas por dia</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-sm bg-[#EE1D23]" />
+                <span className="text-[10px] text-slate-500 font-black uppercase tracking-tighter">Visitas</span>
+              </div>
+            </div>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyVolume} margin={{ top: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 600 }}
+                    interval={0}
+                  />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 600 }}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ 
+                      borderRadius: '16px', 
+                      border: 'none', 
+                      boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)',
+                      padding: '16px',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                  <Bar dataKey="value" name="Visitas" fill="#EE1D23" radius={[4, 4, 0, 0]}>
+                    <LabelList dataKey="value" position="top" style={{ fontSize: 10, fontWeight: 800, fill: '#EE1D23' }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Weekly Volume Chart */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                <Calendar className="w-5 h-5 text-[#333333]" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Volume Semanal</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">S1 a S5 (7 dias cada)</p>
+              </div>
+            </div>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyVolume} margin={{ top: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }} 
+                  />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[8, 8, 0, 0]} barSize={40} minPointSize={2}>
+                    <LabelList dataKey="value" position="top" style={{ fill: '#EE1D23', fontSize: 12, fontWeight: 900 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* G1 by Tech Chart */}
+          <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-10 gap-4">
+              <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tight">Métricas por Tecnologia</h3>
+              <div className="flex gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-sm bg-[#EE1D23]" />
+                  <span className="text-[10px] text-slate-500 font-black uppercase tracking-tighter">Nota G1</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }}
+                    dy={12}
+                  />
+                  <YAxis 
+                    domain={[0, 'auto']} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 600 }}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ 
+                      borderRadius: '16px', 
+                      border: 'none', 
+                      boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)',
+                      padding: '16px',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                  <Bar dataKey="g1" name="Nota G1" fill="#EE1D23" radius={[4, 4, 0, 0]} barSize={35}>
+                    <LabelList dataKey="g1" position="top" formatter={(val: number) => `${val.toFixed(2)}%`} style={{ fontSize: 10, fontWeight: 800, fill: '#EE1D23' }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Volume por Área Chart */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <MapPin className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Volume por Área</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Distribuição por região</p>
+              </div>
+            </div>
+            <div className="h-[600px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={areaData} layout="vertical" margin={{ left: 40, right: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category"
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 10, fontWeight: 800 }} 
+                    width={120}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[0, 8, 8, 0]} barSize={20}>
+                    <LabelList dataKey="value" position="right" style={{ fill: '#EE1D23', fontSize: 11, fontWeight: 900 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Volume por Grupo de Baixa Chart */}
+          <div className="lg:col-span-3 bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <Filter className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Volume por Grupo de Baixa</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Distribuição por categoria de encerramento</p>
+              </div>
+            </div>
+            <div className="h-[500px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={grupoBaixaData} layout="vertical" margin={{ left: 20, right: 60, top: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category"
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 10, fontWeight: 800 }} 
+                    width={180}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[0, 8, 8, 0]} barSize={25} minPointSize={2}>
+                    <LabelList dataKey="value" position="right" style={{ fill: '#EE1D23', fontSize: 11, fontWeight: 900 }} offset={10} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* Top 15 Nodes & Top 20 Low Codes */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          {/* Top 15 Nodes */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                  <Cpu className="w-5 h-5 text-[#333333]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Top 15 Nodes Ofensores</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Maiores volumes de visitas</p>
+                </div>
+              </div>
+              <div className="w-full md:w-64">
+                <MultiFilterSelect 
+                  label="Filtrar Nodes"
+                  icon={<Cpu className="w-3 h-3" />}
+                  value={selectedNodes.length === 0 ? ['Todos'] : selectedNodes}
+                  options={['Todos', ...[...new Set(nodeChartData.map(d => d.node))].sort()]}
+                  onChange={(val) => setSelectedNodes(val.includes('Todos') ? [] : val)}
+                />
+              </div>
+            </div>
+            
+            <div className="h-[550px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={topNodes} 
+                  layout="vertical"
+                  margin={{ top: 5, right: 50, left: 40, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }}
+                    width={80}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ 
+                      borderRadius: '16px', 
+                      border: 'none', 
+                      boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)',
+                      padding: '16px',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                  <Bar 
+                    dataKey="value" 
+                    fill="#EE1D23" 
+                    radius={[0, 8, 8, 0]} 
+                    barSize={18}
+                    label={{ 
+                      position: 'right', 
+                      fill: '#666666', 
+                      fontSize: 11, 
+                      fontWeight: 800,
+                      offset: 10
+                    }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Top 20 Low Codes */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                  <Signal className="w-5 h-5 text-[#333333]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">Top 20 Códigos de Baixa</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Motivos mais frequentes</p>
+                </div>
+              </div>
+              <div className="w-full md:w-64">
+                <MultiFilterSelect 
+                  label="Filtrar Baixas"
+                  icon={<Signal className="w-3 h-3" />}
+                  value={selectedBaixas.length === 0 ? ['Todos'] : selectedBaixas}
+                  options={['Todos', ...[...new Set(baixaChartData.map(d => d.cdBaixa))].sort()]}
+                  onChange={(val) => setSelectedBaixas(val.includes('Todos') ? [] : val)}
+                />
+              </div>
+            </div>
+            
+            <div className="h-[550px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={topBaixas} 
+                  layout="vertical"
+                  margin={{ top: 5, right: 50, left: 40, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }}
+                    width={80}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ 
+                      borderRadius: '16px', 
+                      border: 'none', 
+                      boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)',
+                      padding: '16px',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                  <Bar 
+                    dataKey="value" 
+                    fill="#EE1D23" 
+                    radius={[0, 8, 8, 0]} 
+                    barSize={18}
+                    label={{ 
+                      position: 'right', 
+                      fill: '#666666', 
+                      fontSize: 11, 
+                      fontWeight: 800,
+                      offset: 10
+                    }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+        {/* Base de Clientes Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          {/* Base por Cidade */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <MapPin className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tight">Base de Clientes por Cidade</h3>
+            </div>
+            <div className="h-[350px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={baseMetrics.cityData} 
+                  layout="vertical" 
+                  margin={{ left: 40, right: 40 }}
+                  onClick={(data) => {
+                    if (data && data.activeLabel) {
+                      const city = String(data.activeLabel);
+                      setFilters(prev => ({
+                        ...prev,
+                        cidade: prev.cidade.includes(city) && prev.cidade.length === 1 
+                          ? ['Todos'] 
+                          : [city]
+                      }));
+                    }
+                  }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }}
+                    width={100}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                  />
+                  <Bar 
+                    dataKey="value" 
+                    fill="#EE1D23" 
+                    radius={[0, 8, 8, 0]} 
+                    barSize={25} 
+                    label={{ position: 'right', fill: '#666666', fontSize: 10, fontWeight: 800, offset: 10 }}
+                    className="cursor-pointer"
+                  >
+                    {baseMetrics.cityData.map((entry, index) => (
+                      <Cell 
+                        key={`cell-${index}`} 
+                        fill={filters.cidade.includes(entry.name) ? '#991B1B' : '#EE1D23'} 
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-[10px] text-slate-400 font-bold italic mt-4">* Clique nas barras para filtrar por cidade.</p>
+          </div>
+
+          {/* Base por Tecnologia */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <Cpu className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tight">Base de Clientes por Tecnologia</h3>
+            </div>
+            <div className="h-[350px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={baseMetrics.techData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }} 
+                  />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#666666', fontSize: 10, fontWeight: 600 }} />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                    formatter={(value: any, name: any, props: any) => {
+                      const percentage = props.payload.percentage;
+                      return [
+                        `${value.toLocaleString()} (${percentage.toFixed(1)}%)`,
+                        'Base'
+                      ];
+                    }}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[8, 8, 0, 0]} barSize={60}>
+                    <LabelList 
+                      dataKey="value" 
+                      position="top" 
+                      formatter={(val: number) => val.toLocaleString()}
+                      style={{ fill: '#EE1D23', fontSize: 11, fontWeight: 900 }} 
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+        </main>
+            </>
+          )}
+        </>
+      ) : (
+        <Logbook 
+          entries={logEntries} 
+          isLoading={isLogLoading} 
+          onRefresh={fetchLogs} 
+        />
+      )}
+        
+        <AnimatePresence>
+          {showScrollTop && (
+            <motion.button
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              onClick={scrollToTop}
+              className="fixed bottom-8 right-8 z-[60] w-14 h-14 bg-[#EE1D23] text-white rounded-2xl shadow-2xl shadow-red-500/40 flex items-center justify-center hover:bg-[#D1191F] transition-all active:scale-90 group"
+            >
+              <ArrowUp className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+function MetricCard({ title, value, icon, color, percentage }: { 
+  title: string; 
+  value: number; 
+  icon: React.ReactNode; 
+  color: string;
+  percentage?: number;
+}) {
+  const colorClasses: Record<string, string> = {
+    red: "bg-[#EE1D23] text-white",
+    dark: "bg-[#1A1A1A] text-white",
+    gray: "bg-[#666666] text-white",
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-white p-7 rounded-3xl shadow-md border border-slate-100 flex items-start justify-between relative overflow-hidden"
+    >
+      <div className="relative z-10">
+        <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">{title}</p>
+        <h4 className="text-4xl font-black text-[#333333] tracking-tighter">{value.toLocaleString()}</h4>
+        {percentage !== undefined && (
+          <div className="mt-4 flex items-center gap-3">
+            <div className="w-28 h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div 
+                className={cn("h-full transition-all duration-700 ease-out", 
+                  color === 'red' ? 'bg-[#EE1D23]' : 'bg-[#666666]'
+                )}
+                style={{ width: `${percentage}%` }}
+              />
+            </div>
+            <span className="text-xs font-black text-[#333333]">{percentage.toFixed(0)}%</span>
+          </div>
+        )}
+      </div>
+      <div className={cn("p-4 rounded-2xl shadow-lg", colorClasses[color])}>
+        {React.cloneElement(icon as React.ReactElement<any>, { className: "w-7 h-7" })}
+      </div>
+    </motion.div>
+  );
+}
+
+function MultiFilterSelect({ label, icon, value, options, onChange }: {
+  label: string;
+  icon: React.ReactNode;
+  value: string[];
+  options: string[];
+  onChange: (val: string[]) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Reset search when opening/closing
+  React.useEffect(() => {
+    if (!isOpen) setSearchTerm('');
+  }, [isOpen]);
+
+  const toggleOption = (opt: string) => {
+    if (opt === 'Todos') {
+      onChange(['Todos']);
+      return;
+    }
+
+    let newValue = [...value];
+    if (newValue.includes('Todos')) {
+      newValue = [opt];
+    } else {
+      if (newValue.includes(opt)) {
+        newValue = newValue.filter(v => v !== opt);
+        if (newValue.length === 0) newValue = ['Todos'];
+      } else {
+        newValue.push(opt);
+      }
+    }
+    onChange(newValue);
+  };
+
+  const filteredOptions = options.filter(opt => 
+    opt.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const displayValue = value.includes('Todos') ? 'Todos' : value.length === 1 ? value[0] : `${value.length} selecionados`;
+
+  return (
+    <div className="space-y-2" ref={containerRef}>
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+        <span className="text-[#EE1D23]">{icon}</span>
+        {label}
+      </label>
+      <div className="relative">
+        <button 
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="w-full bg-slate-50 border-2 border-slate-100 text-[#333333] text-sm font-bold rounded-xl px-4 py-3 outline-none focus:ring-4 focus:ring-red-500/10 focus:border-[#EE1D23] transition-all cursor-pointer flex items-center justify-between"
+        >
+          <span className="truncate">{displayValue}</span>
+          <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", isOpen && "rotate-180")} />
+        </button>
+
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-xl max-h-80 overflow-hidden flex flex-col"
+            >
+              <div className="p-2 border-bottom border-slate-100">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    type="text"
+                    placeholder="Pesquisar..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm font-bold outline-none focus:border-[#EE1D23] transition-all"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="overflow-y-auto p-2 max-h-60">
+                {filteredOptions.length > 0 ? (
+                  filteredOptions.map(opt => {
+                    const isSelected = value.includes(opt);
+                    return (
+                      <label 
+                        key={opt} 
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all mb-1 last:mb-0",
+                          isSelected ? "bg-red-50" : "hover:bg-slate-50"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all shrink-0",
+                          isSelected ? "bg-[#EE1D23] border-[#EE1D23]" : "bg-white border-slate-200"
+                        )}>
+                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                        <input 
+                          type="checkbox" 
+                          checked={isSelected}
+                          onChange={() => toggleOption(opt)}
+                          className="hidden"
+                        />
+                        <span className={cn(
+                          "text-sm font-bold transition-colors",
+                          isSelected ? "text-[#EE1D23]" : "text-[#333333]"
+                        )}>
+                          {opt}
+                        </span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <div className="p-4 text-center text-xs font-bold text-slate-400 uppercase italic">Nenhum resultado encontrado</div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({ label, icon, value, options, onChange }: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  options: string[];
+  onChange: (val: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+        <span className="text-[#EE1D23]">{icon}</span>
+        {label}
+      </label>
+      <div className="relative group">
+        <select 
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full appearance-none bg-slate-50 border-2 border-slate-100 text-[#333333] text-sm font-bold rounded-xl px-4 py-3 outline-none focus:ring-4 focus:ring-red-500/10 focus:border-[#EE1D23] transition-all cursor-pointer"
+        >
+          {options.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-[#EE1D23] transition-colors" />
+      </div>
+    </div>
+  );
+}

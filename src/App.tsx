@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, Component } from 'react';
+import React, { useState, useMemo, useRef, useEffect, Component } from 'react';
 import { 
   Filter, 
   BarChart3, 
@@ -26,7 +26,8 @@ import {
   AlertTriangle,
   Loader2,
   BookOpen,
-  Settings
+  Settings,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -50,6 +51,7 @@ interface LogEntry {
   id?: string;
   created_at?: string;
   data: string;
+  cidade: string;
   numero_chamado: string;
   incidente: string;
   descricao: string;
@@ -58,32 +60,135 @@ interface LogEntry {
 }
 
 // Diário de Bordo Component
-const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: { 
+const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: { 
   entries: LogEntry[], 
   isLoading: boolean, 
   onRefresh: () => void,
-  setShowSettings: (show: boolean) => void
+  setShowSettings: (show: boolean) => void,
+  cities: string[]
 }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<Partial<LogEntry>>({
-    data: new Date().toISOString().split('T')[0],
+  const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
+  
+  // Filter State
+  const [logFilters, setLogFilters] = useState({
+    startDate: '',
+    endDate: '',
+    cidades: ['Todos'] as string[]
+  });
+  const [showCityFilter, setShowCityFilter] = useState(false);
+  const [showFormCityFilter, setShowFormCityFilter] = useState(false);
+  const cityFilterRef = useRef<HTMLDivElement>(null);
+  const formCityFilterRef = useRef<HTMLDivElement>(null);
+
+  const getLocalDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const formatDateDisplay = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    // Split YYYY-MM-DD and create date manually to avoid timezone shift
+    const [year, month, day] = dateStr.split('-').map(Number);
+    if (!year || !month || !day) return dateStr;
+    return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+  };
+
+  const [formData, setFormData] = useState<Omit<LogEntry, 'cidade'> & { cidade: string[] }>({
+    data: getLocalDate(),
+    cidade: cities.length > 1 ? [cities[1]] : ['São Paulo'],
     numero_chamado: '',
     incidente: '',
     descricao: '',
     status: 'Pendente',
     data_conclusao: null
   });
+
+  // Filtering logic
+  const filteredEntries = useMemo(() => {
+    return entries.filter(entry => {
+      // Date filter
+      if (logFilters.startDate) {
+        if (entry.data < logFilters.startDate) return false;
+      }
+      if (logFilters.endDate) {
+        if (entry.data > logFilters.endDate) return false;
+      }
+      
+      // City filter
+      if (!logFilters.cidades.includes('Todos')) {
+        const entryCities = entry.cidade.split(',').map(c => c.trim());
+        if (!entryCities.some(c => logFilters.cidades.includes(c))) return false;
+      }
+      
+      return true;
+    });
+  }, [entries, logFilters]);
+
+  const handleExport = () => {
+    const dataToExport = filteredEntries.map(entry => ({
+      'Data': formatDateDisplay(entry.data),
+      'Cidade': entry.cidade,
+      'Nº Chamado': entry.numero_chamado,
+      'Incidente': entry.incidente,
+      'Descrição': entry.descricao,
+      'Status': entry.status,
+      'Data Conclusão': entry.data_conclusao ? formatDateDisplay(entry.data_conclusao) : '-'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Diário de Bordo");
+    XLSX.writeFile(workbook, `Diario_de_Bordo_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleCityFilterToggle = (city: string) => {
+    setLogFilters(prev => {
+      if (city === 'Todos') return { ...prev, cidades: ['Todos'] };
+      
+      let newCidades = prev.cidades.filter(c => c !== 'Todos');
+      if (newCidades.includes(city)) {
+        newCidades = newCidades.filter(c => c !== city);
+        if (newCidades.length === 0) newCidades = ['Todos'];
+      } else {
+        newCidades.push(city);
+      }
+      return { ...prev, cidades: newCidades };
+    });
+  };
+
+  // Close city filters when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (cityFilterRef.current && !cityFilterRef.current.contains(event.target as Node)) {
+        setShowCityFilter(false);
+      }
+      if (formCityFilterRef.current && !formCityFilterRef.current.contains(event.target as Node)) {
+        setShowFormCityFilter(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (formData.cidade.length === 0) {
+      alert('Selecione pelo menos uma cidade.');
+      return;
+    }
     setIsSaving(true);
     
-    // Prepare data for Supabase (handle empty strings for dates)
+    // Prepare data for Supabase (handle empty strings for dates and join cities)
     const dataToSave = {
       ...formData,
+      cidade: formData.cidade.join(', '),
       data_conclusao: formData.data_conclusao === '' ? null : formData.data_conclusao
     };
 
@@ -107,12 +212,13 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
       setIsAdding(false);
       setEditingId(null);
       setFormData({
-        data: new Date().toISOString().split('T')[0],
+        data: getLocalDate(),
+        cidade: cities.length > 1 ? [cities[1]] : ['São Paulo'],
         numero_chamado: '',
         incidente: '',
         descricao: '',
         status: 'Pendente',
-        data_conclusao: ''
+        data_conclusao: null
       });
       onRefresh();
     } catch (err: any) {
@@ -145,7 +251,10 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
   };
 
   const handleEdit = (entry: LogEntry) => {
-    setFormData(entry);
+    setFormData({
+      ...entry,
+      cidade: entry.cidade.split(',').map(c => c.trim())
+    });
     setEditingId(entry.id || null);
     setIsAdding(true);
   };
@@ -154,46 +263,109 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
     <div className="max-w-7xl mx-auto pb-20">
       <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
         <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-gradient-to-r from-white to-slate-50">
-          <div>
-            <h2 className="text-3xl font-black text-[#333333] uppercase italic tracking-tighter flex items-center gap-3">
-              <BookOpen className="w-8 h-8 text-[#EE1D23]" />
-              Diário de Bordo
-            </h2>
-            <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest opacity-80">Registro de Incidentes e Chamados</p>
-          </div>
-          {!getSupabase() && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 max-w-md">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-              <p className="text-xs font-bold text-amber-800 leading-tight">
-                Supabase não configurado. O Diário de Bordo está em modo leitura/desativado. 
-                Configure nas <span className="underline cursor-pointer" onClick={() => setShowSettings(true)}>Configurações</span>.
-              </p>
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Date Range Filter */}
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm">
+              <Calendar className="w-4 h-4 text-slate-400" />
+              <input 
+                type="date" 
+                value={logFilters.startDate}
+                onChange={e => setLogFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                className="text-xs font-bold focus:outline-none bg-transparent"
+              />
+              <span className="text-slate-300">|</span>
+              <input 
+                type="date" 
+                value={logFilters.endDate}
+                onChange={e => setLogFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                className="text-xs font-bold focus:outline-none bg-transparent"
+              />
             </div>
-          )}
-          <button
-            onClick={() => {
-              if (!getSupabase()) {
-                alert('Supabase não configurado. Adicione as chaves nas Secrets para usar o Diário de Bordo.');
-                return;
-              }
-              setIsAdding(!isAdding);
-              if (!isAdding) {
-                setEditingId(null);
-                setFormData({
-                  data: new Date().toISOString().split('T')[0],
-                  numero_chamado: '',
-                  incidente: '',
-                  descricao: '',
-                  status: 'Pendente',
-                  data_conclusao: null
-                });
-              }
-            }}
-            className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-3 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center gap-2 uppercase italic text-sm"
-          >
-            {isAdding ? <XCircle className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-            {isAdding ? 'Cancelar' : 'Novo Registro'}
-          </button>
+
+            {/* City Multi-select Filter */}
+            <div className="relative" ref={cityFilterRef}>
+              <button 
+                onClick={() => setShowCityFilter(!showCityFilter)}
+                className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm hover:border-[#EE1D23] transition-all"
+              >
+                <MapPin className="w-4 h-4 text-slate-400" />
+                <span className="text-xs font-bold text-slate-600">
+                  {logFilters.cidades.includes('Todos') ? 'Todas as Cidades' : `${logFilters.cidades.length} Cidades`}
+                </span>
+                <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showCityFilter && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {showCityFilter && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute top-full left-0 mt-2 w-64 bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 p-4"
+                  >
+                    <div className="max-h-60 overflow-y-auto space-y-1">
+                      {cities.map(city => (
+                        <label key={city} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
+                          <input 
+                            type="checkbox" 
+                            checked={logFilters.cidades.includes(city)}
+                            onChange={() => handleCityFilterToggle(city)}
+                            className="w-4 h-4 rounded border-slate-300 text-[#EE1D23] focus:ring-[#EE1D23]"
+                          />
+                          <span className="text-xs font-bold text-slate-600">{city}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Export Button */}
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-2 bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100 px-4 py-2 rounded-xl transition-all active:scale-95 text-xs font-black uppercase tracking-widest"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              Exportar
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {!getSupabase() && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 max-w-md">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                <p className="text-xs font-bold text-amber-800 leading-tight">
+                  Supabase não configurado.
+                </p>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                if (!getSupabase()) {
+                  setShowSettings(true);
+                  return;
+                }
+                setIsAdding(!isAdding);
+                if (!isAdding) {
+                  setEditingId(null);
+                  setFormData({
+                    data: getLocalDate(),
+                    cidade: cities.length > 1 ? [cities[1]] : ['São Paulo'],
+                    numero_chamado: '',
+                    incidente: '',
+                    descricao: '',
+                    status: 'Pendente',
+                    data_conclusao: null
+                  });
+                }
+              }}
+              className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-3 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center gap-2 uppercase italic text-sm"
+            >
+              {isAdding ? <XCircle className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              {isAdding ? 'Cancelar' : 'Novo Registro'}
+            </button>
+          </div>
         </div>
 
         <AnimatePresence>
@@ -204,7 +376,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden bg-slate-50 border-b border-slate-100"
             >
-              <form onSubmit={handleSave} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+              <form onSubmit={handleSave} className="p-8 grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="space-y-2">
                   <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Data</label>
                   <input
@@ -214,6 +386,53 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                     onChange={e => setFormData({ ...formData, data: e.target.value })}
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Cidades</label>
+                  <div className="relative" ref={formCityFilterRef}>
+                    <button 
+                      type="button"
+                      onClick={() => setShowFormCityFilter(!showFormCityFilter)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all flex items-center justify-between"
+                    >
+                      <span className="truncate">
+                        {formData.cidade.length === 0 ? 'Selecione as cidades' : 
+                         formData.cidade.length === 1 ? formData.cidade[0] : 
+                         `${formData.cidade.length} cidades selecionadas`}
+                      </span>
+                      <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showFormCityFilter && "rotate-180")} />
+                    </button>
+
+                    <AnimatePresence>
+                      {showFormCityFilter && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className="absolute top-full left-0 mt-2 w-full bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 p-4"
+                        >
+                          <div className="max-h-60 overflow-y-auto space-y-1">
+                            {cities.filter(c => c !== 'Todos').map(city => (
+                              <label key={city} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
+                                <input 
+                                  type="checkbox" 
+                                  checked={formData.cidade.includes(city)}
+                                  onChange={() => {
+                                    const newCidades = formData.cidade.includes(city)
+                                      ? formData.cidade.filter(c => c !== city)
+                                      : [...formData.cidade, city];
+                                    setFormData({ ...formData, cidade: newCidades });
+                                  }}
+                                  className="w-4 h-4 rounded border-slate-300 text-[#EE1D23] focus:ring-[#EE1D23]"
+                                />
+                                <span className="text-xs font-bold text-slate-600">{city}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Nº Chamado</label>
@@ -229,7 +448,6 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                   <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Incidente</label>
                   <input
                     type="text"
-                    required
                     placeholder="Ex: Queda de link"
                     value={formData.incidente}
                     onChange={e => setFormData({ ...formData, incidente: e.target.value })}
@@ -246,7 +464,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all min-h-[100px]"
                   />
                 </div>
-                <div className="space-y-6">
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Status</label>
                     <select
@@ -263,13 +481,13 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Data Conclusão</label>
                     <input
                       type="date"
-                      value={formData.data_conclusao}
-                      onChange={e => setFormData({ ...formData, data_conclusao: e.target.value })}
+                      value={formData.data_conclusao || ''}
+                      onChange={e => setFormData({ ...formData, data_conclusao: e.target.value || null })}
                       className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-[#EE1D23] transition-all"
                     />
                   </div>
                 </div>
-                <div className="md:col-span-3 flex justify-end pt-4 border-t border-slate-200">
+                <div className="md:col-span-4 flex justify-end pt-4 border-t border-slate-200">
                   <button
                     type="submit"
                     disabled={isSaving}
@@ -289,6 +507,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
                 <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Data</th>
+                <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Cidade</th>
                 <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Nº Chamado</th>
                 <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Incidente</th>
                 <th className="px-8 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Status</th>
@@ -299,14 +518,14 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-8 py-20 text-center">
+                  <td colSpan={7} className="px-8 py-20 text-center">
                     <Loader2 className="w-10 h-10 text-[#EE1D23] animate-spin mx-auto mb-4" />
                     <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Carregando dados...</p>
                   </td>
                 </tr>
-              ) : entries.length === 0 ? (
+              ) : filteredEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-8 py-20 text-center">
+                  <td colSpan={7} className="px-8 py-20 text-center">
                     <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                       <BookOpen className="w-8 h-8 text-slate-200" />
                     </div>
@@ -314,19 +533,28 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                   </td>
                 </tr>
               ) : (
-                entries.map(entry => (
+                filteredEntries.map(entry => (
                   <tr key={entry.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors group">
                     <td className="px-8 py-6">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-[#EE1D23]">
+                      <div 
+                        className="flex items-center gap-3 cursor-pointer group/date"
+                        onClick={() => setSelectedEntry(entry)}
+                      >
+                        <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-[#EE1D23] group-hover/date:bg-[#EE1D23] group-hover/date:text-white transition-colors">
                           <Calendar className="w-5 h-5" />
                         </div>
-                        <span className="text-sm font-black text-[#333333]">{new Date(entry.data).toLocaleDateString('pt-BR')}</span>
+                        <span className="text-sm font-black text-[#333333] group-hover/date:text-[#EE1D23] transition-colors underline decoration-dotted underline-offset-4">{formatDateDisplay(entry.data)}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <span className="text-xs font-bold text-slate-600">{entry.cidade}</span>
                       </div>
                     </td>
                     <td className="px-8 py-6">
                       <span className="text-xs font-black bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg uppercase tracking-wider">
-                        #{entry.numero_chamado}
+                        #{entry.numero_chamado || '-'}
                       </span>
                     </td>
                     <td className="px-8 py-6">
@@ -350,7 +578,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                     </td>
                     <td className="px-8 py-6">
                       <span className="text-xs font-bold text-slate-500 italic">
-                        {entry.data_conclusao ? new Date(entry.data_conclusao).toLocaleDateString('pt-BR') : '-'}
+                        {entry.data_conclusao ? formatDateDisplay(entry.data_conclusao) : '-'}
                       </span>
                     </td>
                     <td className="px-8 py-6">
@@ -419,6 +647,92 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings }: {
                   className="bg-[#EE1D23] hover:bg-[#D1191F] text-white font-black py-4 px-6 rounded-2xl transition-all shadow-lg shadow-red-500/30 active:scale-95 uppercase italic text-sm"
                 >
                   Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Detail Modal */}
+      <AnimatePresence>
+        {selectedEntry && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 p-8 max-w-2xl w-full"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-[#EE1D23]">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-[#333333] uppercase italic tracking-tighter">Detalhes do Registro</h3>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Informações Completas</p>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedEntry(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+                  <XCircle className="w-6 h-6 text-slate-300" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data do Registro</p>
+                  <p className="text-sm font-black text-[#333333]">{formatDateDisplay(selectedEntry.data)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cidade</p>
+                  <p className="text-sm font-black text-[#333333]">{selectedEntry.cidade}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Chamado</p>
+                  <p className="text-sm font-black text-[#333333]">#{selectedEntry.numero_chamado || 'N/A'}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Incidente</p>
+                  <p className="text-sm font-black text-[#333333]">{selectedEntry.incidente}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</p>
+                  <span className={cn(
+                    "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full flex items-center gap-1.5 w-fit",
+                    selectedEntry.status === 'Resolvido' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                    selectedEntry.status === 'Em Andamento' ? "bg-amber-50 text-amber-600 border border-amber-100" :
+                    "bg-red-50 text-[#EE1D23] border border-red-100"
+                  )}>
+                    {selectedEntry.status}
+                  </span>
+                </div>
+                <div className="md:col-span-2 space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição Completa</p>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-sm font-bold text-slate-600 leading-relaxed whitespace-pre-wrap">{selectedEntry.descricao}</p>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data de Conclusão</p>
+                  <p className="text-sm font-black text-[#333333]">
+                    {selectedEntry.data_conclusao ? formatDateDisplay(selectedEntry.data_conclusao) : 'Ainda não concluído'}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Criado em</p>
+                  <p className="text-xs font-bold text-slate-400">
+                    {selectedEntry.created_at ? new Date(selectedEntry.created_at).toLocaleString('pt-BR') : 'N/A'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setSelectedEntry(null)}
+                  className="bg-[#333333] hover:bg-black text-white font-black py-4 px-10 rounded-2xl transition-all shadow-lg active:scale-95 uppercase italic text-sm"
+                >
+                  Fechar Detalhes
                 </button>
               </div>
             </motion.div>
@@ -514,6 +828,178 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
   }
 }
 
+const TerminalsLog = ({ data }: { data: any[] }) => {
+  const [filters, setFilters] = useState({
+    mes: ['Todos'] as string[],
+    cidade: ['Todos'] as string[],
+    tipoOs: ['Todos'] as string[],
+    statusOs: ['Todos'] as string[],
+    tipoEquipamento: ['Todos'] as string[],
+    modelo: ['Todos'] as string[]
+  });
+
+  const getMonthName = (val: any) => {
+    if (!val) return 'N/A';
+    let date: Date;
+    if (val instanceof Date) {
+      date = val;
+    } else if (typeof val === 'number') {
+      date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    } else {
+      date = new Date(val);
+    }
+    if (isNaN(date.getTime())) return 'N/A';
+    const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    return months[date.getUTCMonth()];
+  };
+
+  const filterOptions = useMemo(() => {
+    const getOptions = (keys: string[]) => {
+      const allValues = data.map(d => {
+        for (const key of keys) {
+          if (d[key] !== undefined) return String(d[key]);
+        }
+        return 'N/A';
+      });
+      const unique = [...new Set(allValues)];
+      return ['Todos', ...unique.sort()];
+    };
+
+    const getMonthOptions = () => {
+      const months = data.map(d => getMonthName(d.DATA_BAIXA || d.data_baixa || d.DATA || d.Data || d.DATA_NOTA || d.data_nota));
+      const unique = [...new Set(months)];
+      return ['Todos', ...unique.sort()];
+    };
+
+    return {
+      meses: getMonthOptions(),
+      cidades: getOptions(['NM_MUNICIPIO_BI', 'MUNICIPIO', 'CIDADE', 'NM_MUNICIPIO']),
+      tiposOs: getOptions(['NM_TIPO_ORDEM_SERVICO', 'TIPO DE OS', 'TIPO_OS', 'NM_TIPO_OS']),
+      statusOs: getOptions(['NM_STATUS_ORDEM_SERVICO', 'STATUS OS', 'STATUS_OS', 'NM_STATUS_OS']),
+      tiposEquipamento: getOptions(['NM_TIPO_EQUIPAMENTO', 'TIPO EQUIPAMENTO', 'EQUIPAMENTO', 'NM_TIPO_EQUIP']),
+      modelos: getOptions(['NM_MODELO', 'MODELO', 'NM_MODELO_EQUIP'])
+    };
+  }, [data]);
+
+  const filteredData = useMemo(() => {
+    return data.filter(item => {
+      const itemMes = getMonthName(item.DATA_BAIXA || item.data_baixa || item.DATA || item.Data || item.DATA_NOTA || item.data_nota);
+      const matchMes = filters.mes.includes('Todos') || filters.mes.includes(itemMes);
+      
+      const getVal = (keys: string[]) => {
+        for (const key of keys) {
+          if (item[key] !== undefined) return String(item[key]);
+        }
+        return 'N/A';
+      };
+
+      const matchCidade = filters.cidade.includes('Todos') || filters.cidade.includes(getVal(['NM_MUNICIPIO_BI', 'MUNICIPIO', 'CIDADE', 'NM_MUNICIPIO']));
+      const matchTipoOs = filters.tipoOs.includes('Todos') || filters.tipoOs.includes(getVal(['NM_TIPO_ORDEM_SERVICO', 'TIPO DE OS', 'TIPO_OS', 'NM_TIPO_OS']));
+      const matchStatusOs = filters.statusOs.includes('Todos') || filters.statusOs.includes(getVal(['NM_STATUS_ORDEM_SERVICO', 'STATUS OS', 'STATUS_OS', 'NM_STATUS_OS']));
+      const matchTipoEquip = filters.tipoEquipamento.includes('Todos') || filters.tipoEquipamento.includes(getVal(['NM_TIPO_EQUIPAMENTO', 'TIPO EQUIPAMENTO', 'EQUIPAMENTO', 'NM_TIPO_EQUIP']));
+      const matchModelo = filters.modelo.includes('Todos') || filters.modelo.includes(getVal(['NM_MODELO', 'MODELO', 'NM_MODELO_EQUIP']));
+      
+      return matchMes && matchCidade && matchTipoOs && matchStatusOs && matchTipoEquip && matchModelo;
+    });
+  }, [data, filters]);
+
+  const handleFilterChange = (key: keyof typeof filters, value: string[]) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto pb-20">
+      <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <MultiFilterSelect 
+              label="Mês" 
+              icon={<Calendar className="w-4 h-4" />} 
+              value={filters.mes} 
+              options={filterOptions.meses} 
+              onChange={(val) => handleFilterChange('mes', val)} 
+            />
+            <MultiFilterSelect 
+              label="Cidade" 
+              icon={<MapPin className="w-4 h-4" />} 
+              value={filters.cidade} 
+              options={filterOptions.cidades} 
+              onChange={(val) => handleFilterChange('cidade', val)} 
+            />
+            <MultiFilterSelect 
+              label="Tipo de OS" 
+              icon={<Wrench className="w-4 h-4" />} 
+              value={filters.tipoOs} 
+              options={filterOptions.tiposOs} 
+              onChange={(val) => handleFilterChange('tipoOs', val)} 
+            />
+            <MultiFilterSelect 
+              label="Status OS" 
+              icon={<Activity className="w-4 h-4" />} 
+              value={filters.statusOs} 
+              options={filterOptions.statusOs} 
+              onChange={(val) => handleFilterChange('statusOs', val)} 
+            />
+            <MultiFilterSelect 
+              label="Tipo Equipamento" 
+              icon={<Cpu className="w-4 h-4" />} 
+              value={filters.tipoEquipamento} 
+              options={filterOptions.tiposEquipamento} 
+              onChange={(val) => handleFilterChange('tipoEquipamento', val)} 
+            />
+            <MultiFilterSelect 
+              label="Modelo" 
+              icon={<Settings className="w-4 h-4" />} 
+              value={filters.modelo} 
+              options={filterOptions.modelos} 
+              onChange={(val) => handleFilterChange('modelo', val)} 
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                {data.length > 0 && Object.keys(data[0]).map(key => (
+                  <th key={key} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">{key}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredData.length === 0 ? (
+                <tr>
+                  <td colSpan={data.length > 0 ? Object.keys(data[0]).length : 1} className="px-8 py-20 text-center">
+                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <FileSpreadsheet className="w-8 h-8 text-slate-200" />
+                    </div>
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Nenhum dado encontrado para os filtros selecionados</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredData.slice(0, 100).map((item, idx) => (
+                  <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                    {Object.values(item).map((val: any, i) => (
+                      <td key={i} className="px-6 py-4 text-xs font-bold text-slate-600 whitespace-nowrap">{String(val || '-')}</td>
+                    ))}
+                  </tr>
+                ))
+              )}
+              {filteredData.length > 100 && (
+                <tr>
+                  <td colSpan={data.length > 0 ? Object.keys(data[0]).length : 1} className="px-8 py-4 text-center bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    Exibindo os primeiros 100 registros de {filteredData.length}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   // Data State
   const [baseData, setBaseData] = useState<VisitData[]>([]);
@@ -522,9 +1008,10 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook' | 'terminals'>('dashboard');
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [isLogLoading, setIsLogLoading] = useState(false);
+  const [terminalData, setTerminalData] = useState<any[]>([]);
   const [githubUrl, setGithubUrl] = useState('');
   const [showGithubInput, setShowGithubInput] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -583,12 +1070,12 @@ export default function App() {
 
   // Filters State
   const [filters, setFilters] = useState({
-    mes: 'Todos',
+    mes: ['Todos'] as string[],
     cidade: ['Todos'] as string[],
-    area: 'Todos',
+    area: ['Todos'] as string[],
     expurgo: 'Todos',
-    tecnologia: 'Todos',
-    grupoBaixa: 'Todos',
+    tecnologia: ['Todos'] as string[],
+    grupoBaixa: ['Todos'] as string[],
     startDate: '',
     endDate: ''
   });
@@ -599,13 +1086,13 @@ export default function App() {
   const filterOptions = useMemo(() => {
     const getOptions = (key: keyof VisitData, currentFilters: typeof filters) => {
       const otherFiltersApplied = baseData.filter(item => {
-        const matchMes = key === 'mes' || currentFilters.mes === 'Todos' || item.mes === currentFilters.mes;
+        const matchMes = key === 'mes' || currentFilters.mes.includes('Todos') || currentFilters.mes.includes(item.mes);
         const matchCidade = key === 'cidade' || currentFilters.cidade.includes('Todos') || currentFilters.cidade.includes(item.cidade);
-        const matchArea = key === 'area' || currentFilters.area === 'Todos' || item.area === currentFilters.area;
+        const matchArea = key === 'area' || currentFilters.area.includes('Todos') || currentFilters.area.includes(item.area);
         const matchExpurgo = key === 'expurgo' || currentFilters.expurgo === 'Todos' || 
           (currentFilters.expurgo === 'Sim' ? item.expurgo : !item.expurgo);
-        const matchTec = key === 'tecnologia' || currentFilters.tecnologia === 'Todos' || item.tecnologia === currentFilters.tecnologia;
-        const matchGrupo = key === 'grupoBaixa' || currentFilters.grupoBaixa === 'Todos' || item.grupoBaixa === currentFilters.grupoBaixa;
+        const matchTec = key === 'tecnologia' || currentFilters.tecnologia.includes('Todos') || currentFilters.tecnologia.includes(item.tecnologia);
+        const matchGrupo = key === 'grupoBaixa' || currentFilters.grupoBaixa.includes('Todos') || currentFilters.grupoBaixa.includes(item.grupoBaixa);
         return matchMes && matchCidade && matchArea && matchExpurgo && matchTec && matchGrupo;
       });
       
@@ -626,13 +1113,13 @@ export default function App() {
   // Filtered Data (Base filters from dropdowns)
   const filteredData = useMemo(() => {
     return baseData.filter(item => {
-      const matchMes = filters.mes === 'Todos' || item.mes === filters.mes;
+      const matchMes = filters.mes.includes('Todos') || filters.mes.includes(item.mes);
       const matchCidade = filters.cidade.includes('Todos') || filters.cidade.includes(item.cidade);
-      const matchArea = filters.area === 'Todos' || item.area === filters.area;
+      const matchArea = filters.area.includes('Todos') || filters.area.includes(item.area);
       const matchExpurgo = filters.expurgo === 'Todos' || 
         (filters.expurgo === 'Sim' ? item.expurgo : !item.expurgo);
-      const matchTec = filters.tecnologia === 'Todos' || item.tecnologia === filters.tecnologia;
-      const matchGrupo = filters.grupoBaixa === 'Todos' || item.grupoBaixa === filters.grupoBaixa;
+      const matchTec = filters.tecnologia.includes('Todos') || filters.tecnologia.includes(item.tecnologia);
+      const matchGrupo = filters.grupoBaixa.includes('Todos') || filters.grupoBaixa.includes(item.grupoBaixa);
       
       const itemDate = new Date(item.fullDate);
       itemDate.setHours(0, 0, 0, 0);
@@ -714,10 +1201,14 @@ export default function App() {
 
       // Normalize for comparison
       const normCityFilters = cityFilter.map(c => normalizeStr(c));
-      const normTechFilter = normalizeStr(techFilter);
+      const isTechArray = Array.isArray(techFilter);
+      const normTechFilters = isTechArray 
+        ? (techFilter as string[]).map(t => normalizeStr(t))
+        : [normalizeStr(techFilter as string)];
 
       // We sum the base from baseCidadeData matching the current filters
       const isTodos = cityFilter.includes('Todos');
+      const isTechTodos = isTechArray ? (techFilter as string[]).includes('Todos') : (techFilter as string) === 'Todos';
       
       baseCidadeData.forEach(b => {
         const normBCidade = normalizeStr(b.cidade);
@@ -743,7 +1234,7 @@ export default function App() {
           normBCidade === cf || normBCidade.includes(cf) || cf.includes(normBCidade)
         );
         
-        const techMatch = techFilter === 'Todos' || normBTech === normTechFilter;
+        const techMatch = isTechTodos || normTechFilters.includes(normBTech);
         
         if (cityMatch && techMatch) {
           baseClientes += b.base;
@@ -812,7 +1303,9 @@ export default function App() {
       return `${d}/${m}`;
     };
 
-    if (filters.mes !== 'Todos') {
+    const isMesSingle = filters.mes.length === 1 && !filters.mes.includes('Todos');
+
+    if (isMesSingle) {
       // Find a reference date from the data to get the year
       // If no data for this specific filter, try to find any date in the baseData
       const refDate = finalFilteredData.find(d => d.fullDate instanceof Date && !isNaN(d.fullDate.getTime()))?.fullDate || 
@@ -821,7 +1314,7 @@ export default function App() {
 
       const year = refDate.getFullYear();
       const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-      const monthIndex = months.indexOf(filters.mes);
+      const monthIndex = months.indexOf(filters.mes[0]);
       
       if (monthIndex !== -1) {
         const lastDay = new Date(year, monthIndex + 1, 0).getDate();
@@ -879,7 +1372,7 @@ export default function App() {
     finalFilteredData.forEach(item => {
       if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
         let dayKey = '';
-        if (filters.mes !== 'Todos') {
+        if (isMesSingle) {
           dayKey = String(item.fullDate.getDate());
         } else {
           dayKey = getDayKey(item.fullDate);
@@ -894,7 +1387,7 @@ export default function App() {
     return Object.entries(dayMap)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => {
-        if (filters.mes !== 'Todos') {
+        if (isMesSingle) {
           return Number(a.name) - Number(b.name);
         }
         const [dayA, monthA] = a.name.split('/').map(Number);
@@ -1012,9 +1505,10 @@ export default function App() {
     const techMap: Record<string, number> = { 'HFC': 0, 'GPON': 0, 'HÍBRIDO': 0, 'OUTROS': 0 };
 
     const normCityFilters = filters.cidade.map(c => normalizeStr(c));
-    const normTechFilter = normalizeStr(filters.tecnologia);
+    const normTechFilters = filters.tecnologia.map(t => normalizeStr(t));
 
     const isTodos = filters.cidade.includes('Todos');
+    const isTechTodos = filters.tecnologia.includes('Todos');
 
     baseCidadeData.forEach(item => {
       const normCity = normalizeStr(item.cidade);
@@ -1039,7 +1533,7 @@ export default function App() {
         normCity === cf || normCity.includes(cf) || cf.includes(normCity)
       );
       
-      const matchTech = filters.tecnologia === 'Todos' || normTech === normTechFilter;
+      const matchTech = isTechTodos || normTechFilters.includes(normTech);
 
       if (matchCity && matchTech) {
         cityMap[item.cidade] = (cityMap[item.cidade] || 0) + item.base;
@@ -1080,6 +1574,9 @@ export default function App() {
       
       // 1. Read Main Data
       const analiticoSheetName = wb.SheetNames.find(name => {
+        const n = normalizeStr(name);
+        return n.includes('GERADAS TERMINAL') || n.includes('GERADAS POR TERMINAIS');
+      }) || wb.SheetNames.find(name => {
         const n = normalizeStr(name);
         return n.includes('ANALITICO') || n.includes('VISITAS') || n.includes('DADOS') || n.includes('GERAL');
       }) || wb.SheetNames.find(name => !normalizeStr(name).includes('BASE')) || wb.SheetNames[0];
@@ -1175,7 +1672,7 @@ export default function App() {
           
           let mesValue = 'N/A';
           let fullDateValue = new Date();
-          const rawDate = row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
+          const rawDate = row.DATA_BAIXA || row.data_baixa || row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
           
           if (rawDate) {
             let date: Date;
@@ -1198,7 +1695,7 @@ export default function App() {
             }
           }
 
-          let techValue = String(row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
+          let techValue = String(row.NM_TIPO_EQUIPAMENTO || row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
           if (techValue.includes('HIBRID') || techValue.includes('HÍBRID')) techValue = 'HÍBRIDO';
           else if (techValue.includes('GPON') || techValue.includes('FIBRA') || techValue.includes('FTTH')) techValue = 'GPON';
           else if (techValue.includes('HFC') || techValue.includes('COAXIAL') || techValue.includes('CABO')) techValue = 'HFC';
@@ -1206,7 +1703,7 @@ export default function App() {
 
           const nota = Number(row.NOTA_AT1 || row.nota_at1 || row.NOTA || row.AT1 || row.notaAT1 || row.NOTA_FINAL || row.PONTUACAO || row.SCORE || 0);
           
-          const rawStatus = String(row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
+          const rawStatus = String(row.NM_STATUS_ORDEM_SERVICO || row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
           let statusValue: 'Executada' | 'Cancelada' = 'Cancelada';
           if (rawStatus.includes('EXEC') || rawStatus.includes('CONCLU') || rawStatus.includes('FINALIZ') || rawStatus.includes('ENCERRADA') || rawStatus.includes('REALIZADA') || rawStatus.includes('OK') || rawStatus.includes('FECHADA') || nota > 0) {
             statusValue = 'Executada';
@@ -1216,13 +1713,13 @@ export default function App() {
             id: `import-${i}`,
             mes: mesValue,
             fullDate: fullDateValue,
-            cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
-            area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
+            cidade: String(row.NM_MUNICIPIO_BI || row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
+            area: String(row.NM_TIPO_ORDEM_SERVICO || row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
             expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
             tecnologia: techValue as Technology,
             status: statusValue,
             notaAT1: nota,
-            node: String(row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
+            node: String(row.NM_MODELO || row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
             cdBaixa: String(row.CD_BAIXA || row.cd_baixa || row.BAIXA || row.COD_BAIXA || 'N/A').trim(),
             grupoBaixa: String(row['GRUPO BAIXA'] || row.GRUPO_BAIXA || row.grupo_baixa || row.GRUPO || 'N/A').trim()
           });
@@ -1235,19 +1732,31 @@ export default function App() {
         if (currentIndex < rawRows.length) {
           setTimeout(processChunk, 0);
         } else {
-          setImportProgress(100);
+          // 3. Read GERADAS TERMINAL Data
+        const terminalSheetName = wb.SheetNames.find(name => {
+          const n = normalizeStr(name);
+          return n.includes('GERADAS TERMINAL') || n.includes('GERADAS POR TERMINAIS');
+        });
+        
+        if (terminalSheetName) {
+          const wsTerminal = wb.Sheets[terminalSheetName];
+          const terminalRawData = XLSX.utils.sheet_to_json(wsTerminal) as any[];
+          setTerminalData(terminalRawData);
+        }
+
+        setImportProgress(100);
           if (mappedData.length > 0) {
             setBaseData(mappedData);
             if (importedBaseCidade.length > 0) {
               setBaseCidadeData(importedBaseCidade);
             }
             setFilters({
-              mes: 'Todos',
+              mes: ['Todos'],
               cidade: ['Todos'],
-              area: 'Todos',
+              area: ['Todos'],
               expurgo: 'Todos',
-              tecnologia: 'Todos',
-              grupoBaixa: 'Todos',
+              tecnologia: ['Todos'],
+              grupoBaixa: ['Todos'],
               startDate: '',
               endDate: ''
             });
@@ -1478,6 +1987,18 @@ export default function App() {
           <BookOpen className="w-4 h-4" />
           Diário de Bordo
         </button>
+        <button
+          onClick={() => setActiveTab('terminals')}
+          className={cn(
+            "flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase italic transition-all active:scale-95",
+            activeTab === 'terminals' 
+              ? "bg-[#EE1D23] text-white shadow-lg shadow-red-500/30" 
+              : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+          )}
+        >
+          <LayoutGrid className="w-4 h-4" />
+          Geradas por Terminais
+        </button>
       </div>
 
       {activeTab === 'dashboard' ? (
@@ -1554,7 +2075,7 @@ export default function App() {
             <h2>Filtros de Pesquisa</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <FilterSelect 
+            <MultiFilterSelect 
               label="Mês" 
               icon={<Calendar className="w-3.5 h-3.5" />}
               value={filters.mes}
@@ -1568,7 +2089,7 @@ export default function App() {
               options={filterOptions.cidades}
               onChange={(v) => setFilters(f => ({ ...f, cidade: v }))}
             />
-            <FilterSelect 
+            <MultiFilterSelect 
               label="Área" 
               icon={<Activity className="w-3.5 h-3.5" />}
               value={filters.area}
@@ -1582,14 +2103,14 @@ export default function App() {
               options={filterOptions.expurgos}
               onChange={(v) => setFilters(f => ({ ...f, expurgo: v }))}
             />
-            <FilterSelect 
+            <MultiFilterSelect 
               label="Tecnologia" 
               icon={<Cpu className="w-3.5 h-3.5" />}
               value={filters.tecnologia}
               options={filterOptions.tecnologias}
               onChange={(v) => setFilters(f => ({ ...f, tecnologia: v }))}
             />
-            <FilterSelect 
+            <MultiFilterSelect 
               label="Grupo de Baixa" 
               icon={<Filter className="w-3.5 h-3.5" />}
               value={filters.grupoBaixa}
@@ -2256,13 +2777,16 @@ export default function App() {
             </>
           )}
         </>
-      ) : (
+      ) : activeTab === 'logbook' ? (
         <Logbook 
           entries={logEntries} 
           isLoading={isLogLoading} 
           onRefresh={fetchLogs} 
           setShowSettings={setShowSettings}
+          cities={filterOptions.cidades}
         />
+      ) : (
+        <TerminalsLog data={terminalData} />
       )}
         
         <AnimatePresence>

@@ -549,7 +549,9 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-2">
                         <MapPin className="w-3 h-3 text-slate-400" />
-                        <span className="text-xs font-bold text-slate-600">{entry.cidade}</span>
+                        <span className="text-xs font-bold text-slate-600">
+                          {entry.cidade.split(',').map(c => cleanCityName(c.trim())).join(', ')}
+                        </span>
                       </div>
                     </td>
                     <td className="px-8 py-6">
@@ -686,7 +688,9 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
                 </div>
                 <div className="space-y-1">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cidade</p>
-                  <p className="text-sm font-black text-[#333333]">{selectedEntry.cidade}</p>
+                  <p className="text-sm font-black text-[#333333]">
+                    {selectedEntry.cidade.split(',').map(c => cleanCityName(c.trim())).join(', ')}
+                  </p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Chamado</p>
@@ -758,6 +762,13 @@ const normalizeStr = (str: string) => {
     .replace(/[^A-Z0-9]/g, ' ') // Replace non-alphanumeric with space
     .trim()
     .replace(/\s+/g, ' '); // Collapse multiple spaces
+};
+
+// Helper to clean city name (remove state suffix like " - PA")
+const cleanCityName = (name: string) => {
+  if (!name) return 'N/A';
+  // Remove state suffix like " - PA", " - SP", etc. at the end of the string
+  return name.split(/\s*-\s*[A-Z]{2}$/i)[0].trim();
 };
 
 // Helper to parse numbers from Excel (handles strings with dots/commas)
@@ -1174,9 +1185,7 @@ export default function App() {
     let daysToShow: string[] = [];
     
     const getDayKey = (date: Date) => {
-      const d = date.getDate().toString().padStart(2, '0');
-      const m = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${d}/${m}`;
+      return String(date.getDate());
     };
 
     const isMesSingle = filters.mes.length === 1 && !filters.mes.includes('Todos');
@@ -1247,12 +1256,7 @@ export default function App() {
     // Fill with actual data
     finalFilteredData.forEach(item => {
       if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
-        let dayKey = '';
-        if (isMesSingle) {
-          dayKey = String(item.fullDate.getDate());
-        } else {
-          dayKey = getDayKey(item.fullDate);
-        }
+        const dayKey = String(item.fullDate.getDate());
         
         if (dayMap[dayKey] !== undefined) {
           dayMap[dayKey] += 1;
@@ -1262,15 +1266,7 @@ export default function App() {
 
     return Object.entries(dayMap)
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => {
-        if (isMesSingle) {
-          return Number(a.name) - Number(b.name);
-        }
-        const [dayA, monthA] = a.name.split('/').map(Number);
-        const [dayB, monthB] = b.name.split('/').map(Number);
-        if (monthA !== monthB) return monthA - monthB;
-        return dayA - dayB;
-      });
+      .sort((a, b) => Number(a.name) - Number(b.name));
   }, [finalFilteredData, baseData, filters]);
 
   // Weekly Volume Data
@@ -1647,8 +1643,10 @@ export default function App() {
         importedBaseCidade = baseRawData.slice(startIdx).flatMap((row) => {
           if (!row || row.length <= colIdxCidade) return [];
           
-          const cidade = String(row[colIdxCidade] || '').trim();
-          if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
+          const rawCidade = String(row[colIdxCidade] || '').trim();
+          if (!rawCidade || normalizeStr(rawCidade) === 'CIDADE' || normalizeStr(rawCidade) === 'MUNICIPIO') return [];
+          
+          const cidade = cleanCityName(rawCidade);
           
           const results = [];
           if (colIdxHFC !== -1) results.push({ cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) });
@@ -1709,11 +1707,14 @@ export default function App() {
             statusValue = 'Executada';
           }
 
+          const rawCidade = String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim();
+          const cidade = cleanCityName(rawCidade);
+
           mappedData.push({
             id: `import-${i}`,
             mes: mesValue,
             fullDate: fullDateValue,
-            cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
+            cidade: cidade,
             area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
             expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
             tecnologia: techValue as Technology,

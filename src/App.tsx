@@ -122,7 +122,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
       
       // City filter
       if (!logFilters.cidades.includes('Todos')) {
-        const entryCities = entry.cidade.split(',').map(c => c.trim());
+        const entryCities = (entry.cidade || '').split(',').map(c => c.trim());
         if (!entryCities.some(c => logFilters.cidades.includes(c))) return false;
       }
       
@@ -176,39 +176,52 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
+    console.log('Iniciando salvamento do registro...', formData);
+
     if (formData.cidade.length === 0) {
-      alert('Selecione pelo menos uma cidade.');
+      setSaveError('Selecione pelo menos uma cidade.');
       return;
     }
     setIsSaving(true);
     
-    // Prepare data for Supabase (handle empty strings for dates and join cities)
-    const dataToSave = {
-      ...formData,
-      cidade: formData.cidade.join(', '),
-      data_conclusao: formData.data_conclusao === '' ? null : formData.data_conclusao
-    };
-
     try {
+      // Prepare data for Supabase (handle empty strings for dates and join cities)
+      // Exclude id and created_at from the data payload to avoid Supabase errors
+      const { id, created_at, ...rest } = formData as any;
+      const dataToSave = {
+        ...rest,
+        cidade: formData.cidade.join(', '),
+        data_conclusao: formData.data_conclusao === '' ? null : formData.data_conclusao
+      };
+
+      console.log('Dados formatados para o Supabase:', dataToSave);
+
       const client = getSupabase();
       if (!client) {
         throw new Error('Supabase não configurado. Adicione VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas Secrets.');
       }
+      
       if (editingId) {
+        console.log('Atualizando registro existente:', editingId);
         const { error } = await client
           .from('diario_de_bordo')
           .update(dataToSave)
           .eq('id', editingId);
         if (error) throw error;
       } else {
+        console.log('Inserindo novo registro...');
         const { error } = await client
           .from('diario_de_bordo')
           .insert([dataToSave]);
         if (error) throw error;
       }
+      
+      console.log('Registro salvo com sucesso!');
       setIsAdding(false);
       setEditingId(null);
       setFormData({
@@ -222,8 +235,8 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
       });
       onRefresh();
     } catch (err: any) {
-      console.error('Error saving log:', err);
-      alert(`Erro ao salvar no banco de dados: ${err.message || 'Verifique a configuração do Supabase e se a tabela "diario_de_bordo" existe.'}`);
+      console.error('Erro detalhado ao salvar log:', err);
+      setSaveError(`Erro ao salvar: ${err.message || 'Verifique a configuração do Supabase e se a tabela "diario_de_bordo" existe.'}`);
     } finally {
       setIsSaving(false);
     }
@@ -253,7 +266,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
   const handleEdit = (entry: LogEntry) => {
     setFormData({
       ...entry,
-      cidade: entry.cidade.split(',').map(c => c.trim())
+      cidade: (entry.cidade || '').split(',').map(c => c.trim())
     });
     setEditingId(entry.id || null);
     setIsAdding(true);
@@ -487,7 +500,14 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
                     />
                   </div>
                 </div>
-                <div className="md:col-span-4 flex justify-end pt-4 border-t border-slate-200">
+                <div className="md:col-span-4 flex flex-col md:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-200">
+                  {saveError && (
+                    <div className="flex items-center gap-2 text-red-500 bg-red-50 px-4 py-2 rounded-xl border border-red-100 text-xs font-bold">
+                      <AlertCircle className="w-4 h-4" />
+                      {saveError}
+                    </div>
+                  )}
+                  <div className="flex-1" />
                   <button
                     type="submit"
                     disabled={isSaving}
@@ -550,7 +570,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
                       <div className="flex items-center gap-2">
                         <MapPin className="w-3 h-3 text-slate-400" />
                         <span className="text-xs font-bold text-slate-600">
-                          {entry.cidade.split(',').map(c => cleanCityName(c.trim())).join(', ')}
+                          {(entry.cidade || '').split(',').map(c => cleanCityName(c.trim())).join(', ')}
                         </span>
                       </div>
                     </td>
@@ -689,7 +709,7 @@ const Logbook = ({ entries, isLoading, onRefresh, setShowSettings, cities }: {
                 <div className="space-y-1">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cidade</p>
                   <p className="text-sm font-black text-[#333333]">
-                    {selectedEntry.cidade.split(',').map(c => cleanCityName(c.trim())).join(', ')}
+                    {(selectedEntry.cidade || '').split(',').map(c => cleanCityName(c.trim())).join(', ')}
                   </p>
                 </div>
                 <div className="space-y-1">

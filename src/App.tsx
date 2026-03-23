@@ -26,8 +26,7 @@ import {
   AlertTriangle,
   Loader2,
   BookOpen,
-  Settings,
-  LayoutGrid
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -828,178 +827,6 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
   }
 }
 
-const TerminalsLog = ({ data }: { data: any[] }) => {
-  const [filters, setFilters] = useState({
-    mes: ['Todos'] as string[],
-    cidade: ['Todos'] as string[],
-    tipoOs: ['Todos'] as string[],
-    statusOs: ['Todos'] as string[],
-    tipoEquipamento: ['Todos'] as string[],
-    modelo: ['Todos'] as string[]
-  });
-
-  const getMonthName = (val: any) => {
-    if (!val) return 'N/A';
-    let date: Date;
-    if (val instanceof Date) {
-      date = val;
-    } else if (typeof val === 'number') {
-      date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    } else {
-      date = new Date(val);
-    }
-    if (isNaN(date.getTime())) return 'N/A';
-    const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    return months[date.getUTCMonth()];
-  };
-
-  const filterOptions = useMemo(() => {
-    const getOptions = (keys: string[]) => {
-      const allValues = data.map(d => {
-        for (const key of keys) {
-          if (d[key] !== undefined) return String(d[key]);
-        }
-        return 'N/A';
-      });
-      const unique = [...new Set(allValues)];
-      return ['Todos', ...unique.sort()];
-    };
-
-    const getMonthOptions = () => {
-      const months = data.map(d => getMonthName(d.DATA_BAIXA || d.data_baixa || d.DATA || d.Data || d.DATA_NOTA || d.data_nota));
-      const unique = [...new Set(months)];
-      return ['Todos', ...unique.sort()];
-    };
-
-    return {
-      meses: getMonthOptions(),
-      cidades: getOptions(['NM_MUNICIPIO_BI', 'MUNICIPIO', 'CIDADE', 'NM_MUNICIPIO']),
-      tiposOs: getOptions(['NM_TIPO_ORDEM_SERVICO', 'TIPO DE OS', 'TIPO_OS', 'NM_TIPO_OS']),
-      statusOs: getOptions(['NM_STATUS_ORDEM_SERVICO', 'STATUS OS', 'STATUS_OS', 'NM_STATUS_OS']),
-      tiposEquipamento: getOptions(['NM_TIPO_EQUIPAMENTO', 'TIPO EQUIPAMENTO', 'EQUIPAMENTO', 'NM_TIPO_EQUIP']),
-      modelos: getOptions(['NM_MODELO', 'MODELO', 'NM_MODELO_EQUIP'])
-    };
-  }, [data]);
-
-  const filteredData = useMemo(() => {
-    return data.filter(item => {
-      const itemMes = getMonthName(item.DATA_BAIXA || item.data_baixa || item.DATA || item.Data || item.DATA_NOTA || item.data_nota);
-      const matchMes = filters.mes.includes('Todos') || filters.mes.includes(itemMes);
-      
-      const getVal = (keys: string[]) => {
-        for (const key of keys) {
-          if (item[key] !== undefined) return String(item[key]);
-        }
-        return 'N/A';
-      };
-
-      const matchCidade = filters.cidade.includes('Todos') || filters.cidade.includes(getVal(['NM_MUNICIPIO_BI', 'MUNICIPIO', 'CIDADE', 'NM_MUNICIPIO']));
-      const matchTipoOs = filters.tipoOs.includes('Todos') || filters.tipoOs.includes(getVal(['NM_TIPO_ORDEM_SERVICO', 'TIPO DE OS', 'TIPO_OS', 'NM_TIPO_OS']));
-      const matchStatusOs = filters.statusOs.includes('Todos') || filters.statusOs.includes(getVal(['NM_STATUS_ORDEM_SERVICO', 'STATUS OS', 'STATUS_OS', 'NM_STATUS_OS']));
-      const matchTipoEquip = filters.tipoEquipamento.includes('Todos') || filters.tipoEquipamento.includes(getVal(['NM_TIPO_EQUIPAMENTO', 'TIPO EQUIPAMENTO', 'EQUIPAMENTO', 'NM_TIPO_EQUIP']));
-      const matchModelo = filters.modelo.includes('Todos') || filters.modelo.includes(getVal(['NM_MODELO', 'MODELO', 'NM_MODELO_EQUIP']));
-      
-      return matchMes && matchCidade && matchTipoOs && matchStatusOs && matchTipoEquip && matchModelo;
-    });
-  }, [data, filters]);
-
-  const handleFilterChange = (key: keyof typeof filters, value: string[]) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  };
-
-  return (
-    <div className="max-w-7xl mx-auto pb-20">
-      <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
-        <div className="p-8 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50">
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <MultiFilterSelect 
-              label="Mês" 
-              icon={<Calendar className="w-4 h-4" />} 
-              value={filters.mes} 
-              options={filterOptions.meses} 
-              onChange={(val) => handleFilterChange('mes', val)} 
-            />
-            <MultiFilterSelect 
-              label="Cidade" 
-              icon={<MapPin className="w-4 h-4" />} 
-              value={filters.cidade} 
-              options={filterOptions.cidades} 
-              onChange={(val) => handleFilterChange('cidade', val)} 
-            />
-            <MultiFilterSelect 
-              label="Tipo de OS" 
-              icon={<Wrench className="w-4 h-4" />} 
-              value={filters.tipoOs} 
-              options={filterOptions.tiposOs} 
-              onChange={(val) => handleFilterChange('tipoOs', val)} 
-            />
-            <MultiFilterSelect 
-              label="Status OS" 
-              icon={<Activity className="w-4 h-4" />} 
-              value={filters.statusOs} 
-              options={filterOptions.statusOs} 
-              onChange={(val) => handleFilterChange('statusOs', val)} 
-            />
-            <MultiFilterSelect 
-              label="Tipo Equipamento" 
-              icon={<Cpu className="w-4 h-4" />} 
-              value={filters.tipoEquipamento} 
-              options={filterOptions.tiposEquipamento} 
-              onChange={(val) => handleFilterChange('tipoEquipamento', val)} 
-            />
-            <MultiFilterSelect 
-              label="Modelo" 
-              icon={<Settings className="w-4 h-4" />} 
-              value={filters.modelo} 
-              options={filterOptions.modelos} 
-              onChange={(val) => handleFilterChange('modelo', val)} 
-            />
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                {data.length > 0 && Object.keys(data[0]).map(key => (
-                  <th key={key} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">{key}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.length === 0 ? (
-                <tr>
-                  <td colSpan={data.length > 0 ? Object.keys(data[0]).length : 1} className="px-8 py-20 text-center">
-                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                      <FileSpreadsheet className="w-8 h-8 text-slate-200" />
-                    </div>
-                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Nenhum dado encontrado para os filtros selecionados</p>
-                  </td>
-                </tr>
-              ) : (
-                filteredData.slice(0, 100).map((item, idx) => (
-                  <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                    {Object.values(item).map((val: any, i) => (
-                      <td key={i} className="px-6 py-4 text-xs font-bold text-slate-600 whitespace-nowrap">{String(val || '-')}</td>
-                    ))}
-                  </tr>
-                ))
-              )}
-              {filteredData.length > 100 && (
-                <tr>
-                  <td colSpan={data.length > 0 ? Object.keys(data[0]).length : 1} className="px-8 py-4 text-center bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    Exibindo os primeiros 100 registros de {filteredData.length}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export default function App() {
   // Data State
   const [baseData, setBaseData] = useState<VisitData[]>([]);
@@ -1008,10 +835,9 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook' | 'terminals'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logbook'>('dashboard');
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [isLogLoading, setIsLogLoading] = useState(false);
-  const [terminalData, setTerminalData] = useState<any[]>([]);
   const [githubUrl, setGithubUrl] = useState('');
   const [showGithubInput, setShowGithubInput] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1575,9 +1401,6 @@ export default function App() {
       // 1. Read Main Data
       const analiticoSheetName = wb.SheetNames.find(name => {
         const n = normalizeStr(name);
-        return n.includes('GERADAS TERMINAL') || n.includes('GERADAS POR TERMINAIS');
-      }) || wb.SheetNames.find(name => {
-        const n = normalizeStr(name);
         return n.includes('ANALITICO') || n.includes('VISITAS') || n.includes('DADOS') || n.includes('GERAL');
       }) || wb.SheetNames.find(name => !normalizeStr(name).includes('BASE')) || wb.SheetNames[0];
       
@@ -1672,7 +1495,7 @@ export default function App() {
           
           let mesValue = 'N/A';
           let fullDateValue = new Date();
-          const rawDate = row.DATA_BAIXA || row.data_baixa || row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
+          const rawDate = row.DATA_NOTA || row.data_nota || row.Data || row.DATA || row.DATA_EXECUCAO || row.DATA_FIM || row.DT_EXEC;
           
           if (rawDate) {
             let date: Date;
@@ -1695,7 +1518,7 @@ export default function App() {
             }
           }
 
-          let techValue = String(row.NM_TIPO_EQUIPAMENTO || row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
+          let techValue = String(row.DSC_SEG_PRODUTO || row.tecnologia || row.TECNOLOGIA || row.PRODUTO || row.SEGMENTO || 'HFC').toUpperCase().trim();
           if (techValue.includes('HIBRID') || techValue.includes('HÍBRID')) techValue = 'HÍBRIDO';
           else if (techValue.includes('GPON') || techValue.includes('FIBRA') || techValue.includes('FTTH')) techValue = 'GPON';
           else if (techValue.includes('HFC') || techValue.includes('COAXIAL') || techValue.includes('CABO')) techValue = 'HFC';
@@ -1703,7 +1526,7 @@ export default function App() {
 
           const nota = Number(row.NOTA_AT1 || row.nota_at1 || row.NOTA || row.AT1 || row.notaAT1 || row.NOTA_FINAL || row.PONTUACAO || row.SCORE || 0);
           
-          const rawStatus = String(row.NM_STATUS_ORDEM_SERVICO || row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
+          const rawStatus = String(row.NM_STATUS_OS || row.STATUS || row.status || row.SITUACAO || row.situação || row.DSC_STATUS || row.NM_SITUACAO || '').toUpperCase().trim();
           let statusValue: 'Executada' | 'Cancelada' = 'Cancelada';
           if (rawStatus.includes('EXEC') || rawStatus.includes('CONCLU') || rawStatus.includes('FINALIZ') || rawStatus.includes('ENCERRADA') || rawStatus.includes('REALIZADA') || rawStatus.includes('OK') || rawStatus.includes('FECHADA') || nota > 0) {
             statusValue = 'Executada';
@@ -1713,13 +1536,13 @@ export default function App() {
             id: `import-${i}`,
             mes: mesValue,
             fullDate: fullDateValue,
-            cidade: String(row.NM_MUNICIPIO_BI || row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
-            area: String(row.NM_TIPO_ORDEM_SERVICO || row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
+            cidade: String(row.MUNICIPIO || row.municipio || row.cidade || row.CIDADE || row.LOCALIDADE || 'N/A').trim(),
+            area: String(row.AREA_DESPACHO || row.area_despacho || row.area || row.AREA || row.SETOR || 'N/A').trim(),
             expurgo: row.EXPURGO_AT1 === 'Sim' || row.EXPURGO_AT1 === 'S' || row.EXPURGO_AT1 === true || row.expurgo === true,
             tecnologia: techValue as Technology,
             status: statusValue,
             notaAT1: nota,
-            node: String(row.NM_MODELO || row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
+            node: String(row.CD_NODE || row.node || row.NODE || row.ESTACAO || 'N/A').trim(),
             cdBaixa: String(row.CD_BAIXA || row.cd_baixa || row.BAIXA || row.COD_BAIXA || 'N/A').trim(),
             grupoBaixa: String(row['GRUPO BAIXA'] || row.GRUPO_BAIXA || row.grupo_baixa || row.GRUPO || 'N/A').trim()
           });
@@ -1732,19 +1555,7 @@ export default function App() {
         if (currentIndex < rawRows.length) {
           setTimeout(processChunk, 0);
         } else {
-          // 3. Read GERADAS TERMINAL Data
-        const terminalSheetName = wb.SheetNames.find(name => {
-          const n = normalizeStr(name);
-          return n.includes('GERADAS TERMINAL') || n.includes('GERADAS POR TERMINAIS');
-        });
-        
-        if (terminalSheetName) {
-          const wsTerminal = wb.Sheets[terminalSheetName];
-          const terminalRawData = XLSX.utils.sheet_to_json(wsTerminal) as any[];
-          setTerminalData(terminalRawData);
-        }
-
-        setImportProgress(100);
+          setImportProgress(100);
           if (mappedData.length > 0) {
             setBaseData(mappedData);
             if (importedBaseCidade.length > 0) {
@@ -1986,18 +1797,6 @@ export default function App() {
         >
           <BookOpen className="w-4 h-4" />
           Diário de Bordo
-        </button>
-        <button
-          onClick={() => setActiveTab('terminals')}
-          className={cn(
-            "flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase italic transition-all active:scale-95",
-            activeTab === 'terminals' 
-              ? "bg-[#EE1D23] text-white shadow-lg shadow-red-500/30" 
-              : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
-          )}
-        >
-          <LayoutGrid className="w-4 h-4" />
-          Geradas por Terminais
         </button>
       </div>
 
@@ -2777,7 +2576,7 @@ export default function App() {
             </>
           )}
         </>
-      ) : activeTab === 'logbook' ? (
+      ) : (
         <Logbook 
           entries={logEntries} 
           isLoading={isLogLoading} 
@@ -2785,8 +2584,6 @@ export default function App() {
           setShowSettings={setShowSettings}
           cities={filterOptions.cidades}
         />
-      ) : (
-        <TerminalsLog data={terminalData} />
       )}
         
         <AnimatePresence>

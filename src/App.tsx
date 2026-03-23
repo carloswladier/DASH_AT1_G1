@@ -26,7 +26,8 @@ import {
   AlertTriangle,
   Loader2,
   BookOpen,
-  Settings
+  Settings,
+  Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -897,6 +898,7 @@ export default function App() {
   // Filters State
   const [filters, setFilters] = useState({
     mes: ['Todos'] as string[],
+    semana: ['Todos'] as string[],
     cidade: ['Todos'] as string[],
     area: ['Todos'] as string[],
     expurgo: 'Todos',
@@ -928,6 +930,7 @@ export default function App() {
 
     return {
       meses: getOptions('mes', filters),
+      semanas: ['Todos', 'S1', 'S2', 'S3', 'S4', 'S5'],
       cidades: getOptions('cidade', filters),
       areas: getOptions('area', filters),
       expurgos: ['Todos', 'Sim', 'Não'],
@@ -940,6 +943,18 @@ export default function App() {
   const filteredData = useMemo(() => {
     return baseData.filter(item => {
       const matchMes = filters.mes.includes('Todos') || filters.mes.includes(item.mes);
+      
+      let matchSemana = filters.semana.includes('Todos');
+      if (!matchSemana && item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
+        const day = item.fullDate.getDate();
+        let itemSemana = 'S5';
+        if (day <= 7) itemSemana = 'S1';
+        else if (day <= 14) itemSemana = 'S2';
+        else if (day <= 21) itemSemana = 'S3';
+        else if (day <= 28) itemSemana = 'S4';
+        matchSemana = filters.semana.includes(itemSemana);
+      }
+
       const matchCidade = filters.cidade.includes('Todos') || filters.cidade.includes(item.cidade);
       const matchArea = filters.area.includes('Todos') || filters.area.includes(item.area);
       const matchExpurgo = filters.expurgo === 'Todos' || 
@@ -964,7 +979,7 @@ export default function App() {
         matchDate = matchDate && itemDate <= end;
       }
       
-      return matchMes && matchCidade && matchArea && matchExpurgo && matchTec && matchGrupo && matchDate;
+      return matchMes && matchSemana && matchCidade && matchArea && matchExpurgo && matchTec && matchGrupo && matchDate;
     });
   }, [filters, baseData]);
 
@@ -1002,14 +1017,21 @@ export default function App() {
     };
 
     // 2. Projection Calculation Logic (%) - Strictly following user rules
-    const calculateProjectionDetails = (data: VisitData[], techOverride?: Technology) => {
+    const calculateProjectionDetails = (data: VisitData[], techOverride?: Technology, globalDiasTrabOverride?: number) => {
       // OS_EXECUTADAS
       const osExec = data.filter(d => d.status === 'Executada').length;
       
       // DIAS_TRABALHADOS (Distinct dates in DATA_NOTA)
-      const uniqueDates = new Set(data.map(d => d.fullDate instanceof Date ? d.fullDate.toDateString() : ''));
-      uniqueDates.delete('');
-      const diasTrab = uniqueDates.size || 1;
+      // User requested: "se o último dia for 19, considere os 19 dias para todas as cidades"
+      // So we use the global max day if provided, otherwise calculate for this subset
+      let diasTrab = 1;
+      if (globalDiasTrabOverride) {
+        diasTrab = globalDiasTrabOverride;
+      } else {
+        const uniqueDates = new Set(data.map(d => d.fullDate instanceof Date ? d.fullDate.toDateString() : ''));
+        uniqueDates.delete('');
+        diasTrab = uniqueDates.size || 1;
+      }
 
       // DIAS_DO_MES
       // Use reference date from data if available, otherwise current month
@@ -1079,11 +1101,39 @@ export default function App() {
       return { osExec, totalVisits, diasTrab, projOsAT1, projOsG1, base: baseClientes, at1, g1, diasMes };
     };
 
-    const totalDetails = calculateProjectionDetails(finalFilteredData);
-    const hfcDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HFC'), 'HFC');
-    const gponDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'GPON'), 'GPON');
-    const hibridoDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HÍBRIDO'), 'HÍBRIDO');
-    const outrosDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'OUTROS'), 'OUTROS');
+    // Global Dias Trabalhados (based on all data matching month/date filters, ignoring city/tech/etc)
+    // User requested: "se o último dia for 19, considere os 19 dias para todas as cidades"
+    const monthsArr = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const timeRefData = baseData.filter(item => {
+      const itemMes = monthsArr[item.fullDate.getMonth()];
+      const matchMes = filters.mes.includes('Todos') || filters.mes.includes(itemMes);
+      
+      const itemDate = new Date(item.fullDate);
+      itemDate.setHours(0, 0, 0, 0);
+      let matchDate = true;
+      if (filters.startDate) {
+        const [y, m, d] = filters.startDate.split('-').map(Number);
+        const start = new Date(y, m - 1, d);
+        start.setHours(0, 0, 0, 0);
+        matchDate = matchDate && itemDate >= start;
+      }
+      if (filters.endDate) {
+        const [y, m, d] = filters.endDate.split('-').map(Number);
+        const end = new Date(y, m - 1, d);
+        end.setHours(0, 0, 0, 0);
+        matchDate = matchDate && itemDate <= end;
+      }
+      return matchMes && matchDate;
+    });
+
+    const dayNumbers = timeRefData.map(d => d.fullDate instanceof Date ? d.fullDate.getDate() : 0).filter(d => d > 0);
+    const globalDiasTrab = dayNumbers.length > 0 ? Math.max(...dayNumbers) : 1;
+
+    const totalDetails = calculateProjectionDetails(finalFilteredData, undefined, globalDiasTrab);
+    const hfcDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HFC'), 'HFC', globalDiasTrab);
+    const gponDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'GPON'), 'GPON', globalDiasTrab);
+    const hibridoDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'HÍBRIDO'), 'HÍBRIDO', globalDiasTrab);
+    const outrosDetails = calculateProjectionDetails(finalFilteredData.filter(d => d.tecnologia === 'OUTROS'), 'OUTROS', globalDiasTrab);
 
     return {
       total,
@@ -1247,6 +1297,52 @@ export default function App() {
     return Object.entries(weekMap).map(([name, value]) => ({ name, value }));
   }, [finalFilteredData]);
 
+  // Weekly AT1 Projection Data (Projected AT1 per week)
+  const weeklyAt1ProjectionData = useMemo(() => {
+    const base = metrics.details.base;
+    const diasMes = metrics.details.diasMes;
+    
+    if (base === 0) return [
+      { name: 'S1', value: 0 },
+      { name: 'S2', value: 0 },
+      { name: 'S3', value: 0 },
+      { name: 'S4', value: 0 },
+      { name: 'S5', value: 0 }
+    ];
+
+    const weekData: Record<string, { osExec: number, dates: Set<string> }> = {
+      'S1': { osExec: 0, dates: new Set() },
+      'S2': { osExec: 0, dates: new Set() },
+      'S3': { osExec: 0, dates: new Set() },
+      'S4': { osExec: 0, dates: new Set() },
+      'S5': { osExec: 0, dates: new Set() }
+    };
+
+    finalFilteredData.forEach(item => {
+      if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
+        const day = item.fullDate.getDate();
+        const dateStr = item.fullDate.toDateString();
+        let week = 'S5';
+        if (day <= 7) week = 'S1';
+        else if (day <= 14) week = 'S2';
+        else if (day <= 21) week = 'S3';
+        else if (day <= 28) week = 'S4';
+        
+        if (item.status === 'Executada') {
+          weekData[week].osExec += 1;
+        }
+        weekData[week].dates.add(dateStr);
+      }
+    });
+
+    return Object.entries(weekData).map(([name, data]) => {
+      const diasTrab = data.dates.size || 1;
+      const projOs = (data.osExec / diasTrab) * diasMes;
+      const value = (projOs / base) * 100;
+      return { name, value: Number(value.toFixed(2)) };
+    });
+  }, [finalFilteredData, metrics]);
+
   // Top 15 Offending Nodes (Uses nodeChartData)
   const topNodes = useMemo(() => {
     const nodeCounts: Record<string, number> = {};
@@ -1390,6 +1486,87 @@ export default function App() {
     return { cityData, techData };
   }, [baseCidadeData, filters]);
 
+  // AT1 by City Projection Data
+  const at1ByCityData = useMemo(() => {
+    const cityMap: Record<string, { name: string, osExec: number, dates: Set<string>, base: number }> = {};
+    
+    const isTodos = filters.cidade.includes('Todos');
+    const normCityFilters = filters.cidade.map(c => normalizeStr(c).replace(/\s+/g, ''));
+    const normTechFilters = filters.tecnologia.map(t => normalizeStr(t));
+    const isTechTodos = filters.tecnologia.includes('Todos');
+
+    // 1. Populate cityMap from base data
+    baseCidadeData.forEach(item => {
+      const normCity = normalizeStr(item.cidade);
+      const normCityKey = normCity.replace(/\s+/g, '');
+      const normTech = normalizeStr(item.tecnologia);
+
+      const matchCity = isTodos || normCityFilters.some(cf => 
+        normCityKey === cf || normCityKey.includes(cf) || cf.includes(normCityKey)
+      );
+      
+      const matchTech = isTechTodos || normTechFilters.includes(normTech);
+
+      if (matchCity && matchTech) {
+        // Exclude total/regional rows if "Todos" is selected
+        if (isTodos) {
+          const isTotalOrRegional = 
+            normCityKey.includes('TOTAL') || 
+            normCityKey.includes('GERAL') || 
+            normCityKey.includes('SUM') ||
+            normCityKey === 'NORTE' || 
+            normCityKey === 'SUL' || 
+            normCityKey === 'LESTE' || 
+            normCityKey === 'OESTE' ||
+            normCityKey === 'REGIONAL';
+          if (isTotalOrRegional) return;
+        }
+
+        if (!cityMap[normCityKey]) {
+          cityMap[normCityKey] = { name: item.cidade, osExec: 0, dates: new Set(), base: 0 };
+        }
+        cityMap[normCityKey].base += item.base;
+      }
+    });
+
+    // 2. Add visit data with more permissive matching
+    const cityKeys = Object.keys(cityMap);
+    finalFilteredData.forEach(item => {
+      const normCityItem = normalizeStr(item.cidade).replace(/\s+/g, '');
+      
+      // Find the best matching key in cityMap
+      let matchedKey = cityMap[normCityItem] ? normCityItem : cityKeys.find(key => 
+        key === normCityItem || key.includes(normCityItem) || normCityItem.includes(key)
+      );
+
+      if (matchedKey) {
+        if (item.status === 'Executada') {
+          cityMap[matchedKey].osExec += 1;
+        }
+        if (item.fullDate instanceof Date && !isNaN(item.fullDate.getTime())) {
+          cityMap[matchedKey].dates.add(item.fullDate.toDateString());
+        }
+      }
+    });
+
+    const diasMes = metrics.details.diasMes || 30;
+    const diasTrabGlobal = metrics.details.diasTrab || 1;
+
+    return Object.values(cityMap)
+      .map(data => {
+        const projOsAT1 = (data.osExec / diasTrabGlobal) * diasMes;
+        const at1 = data.base > 0 ? (projOsAT1 / data.base) * 100 : 0;
+        return { 
+          name: data.name, 
+          value: Number(at1.toFixed(2)), 
+          base: data.base, 
+          osExec: data.osExec 
+        };
+      })
+      .filter(item => item.base > 0) // Show all cities that have a base
+      .sort((a, b) => b.value - a.value);
+  }, [finalFilteredData, baseCidadeData, filters, metrics]);
+
   const COLORS = [CLARO_RED, '#666666', '#999999'];
 
   // Excel Import Handler
@@ -1418,7 +1595,7 @@ export default function App() {
       // 2. Read BASE Data
       const baseCidadeSheetName = wb.SheetNames.find(name => {
         const n = normalizeStr(name);
-        return n === 'BASE' || n.includes('BASE') || n.includes('REFERENCIA') || n.includes('METAS') || n.includes('CIDADE');
+        return n === 'BASE' || n.includes('BASE') || n.includes('REFERENCIA') || n.includes('METAS') || n.includes('CIDADE') || n.includes('CLIENTE') || n.includes('TOTAL');
       });
       
       let importedBaseCidade: BaseCidadeData[] = [];
@@ -1442,10 +1619,11 @@ export default function App() {
         const headerRow = headerRowIndex === -1 ? [] : baseRawData[headerRowIndex];
 
         let colIdxCidade = 0;
-        let colIdxHFC = 2;
-        let colIdxGPON = 3;
-        let colIdxHibrido = 4;
-        let colIdxOutros = 5;
+        let colIdxHFC = -1;
+        let colIdxGPON = -1;
+        let colIdxHibrido = -1;
+        let colIdxOutros = -1;
+        let colIdxTotalBase = -1;
 
         if (headerRow.length > 0) {
           headerRow.forEach((cell, idx) => {
@@ -1455,31 +1633,30 @@ export default function App() {
             if (s.includes('GPON') || s.includes('FIBRA') || s.includes('G PON')) colIdxGPON = idx;
             if (s.includes('HIBRID') || s.includes('HIBRIDO')) colIdxHibrido = idx;
             if (s.includes('OUTRO') || s.includes('OUTRA')) colIdxOutros = idx;
+            if (s === 'BASE' || s === 'CLIENTES' || s === 'TOTAL' || s === 'BASE_CLIENTES') colIdxTotalBase = idx;
           });
         }
 
+        // Fallbacks if columns not found by name
+        if (colIdxHFC === -1 && colIdxTotalBase !== -1) colIdxHFC = colIdxTotalBase;
+        if (colIdxHFC === -1) colIdxHFC = 2;
+        if (colIdxGPON === -1) colIdxGPON = 3;
+        if (colIdxHibrido === -1) colIdxHibrido = 4;
+        if (colIdxOutros === -1) colIdxOutros = 5;
+
         importedBaseCidade = baseRawData.slice(startIdx).flatMap((row) => {
-          if (!row || row.length <= Math.max(colIdxCidade, colIdxHFC, colIdxGPON, colIdxHibrido, colIdxOutros)) {
-            if (row && row[colIdxCidade]) {
-              const cidade = String(row[colIdxCidade]).trim();
-              if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
-              return [
-                { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
-                { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
-                { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
-                { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
-              ];
-            }
-            return [];
-          }
+          if (!row || row.length <= colIdxCidade) return [];
+          
           const cidade = String(row[colIdxCidade] || '').trim();
           if (!cidade || normalizeStr(cidade) === 'CIDADE' || normalizeStr(cidade) === 'MUNICIPIO') return [];
-          return [
-            { cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) },
-            { cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) },
-            { cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) },
-            { cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) }
-          ];
+          
+          const results = [];
+          if (colIdxHFC !== -1) results.push({ cidade, tecnologia: 'HFC' as Technology, base: parseExcelNumber(row[colIdxHFC]) });
+          if (colIdxGPON !== -1 && colIdxGPON !== colIdxHFC) results.push({ cidade, tecnologia: 'GPON' as Technology, base: parseExcelNumber(row[colIdxGPON]) });
+          if (colIdxHibrido !== -1 && colIdxHibrido !== colIdxHFC) results.push({ cidade, tecnologia: 'HÍBRIDO' as Technology, base: parseExcelNumber(row[colIdxHibrido]) });
+          if (colIdxOutros !== -1 && colIdxOutros !== colIdxHFC) results.push({ cidade, tecnologia: 'OUTROS' as Technology, base: parseExcelNumber(row[colIdxOutros]) });
+          
+          return results;
         });
       }
 
@@ -1563,6 +1740,7 @@ export default function App() {
             }
             setFilters({
               mes: ['Todos'],
+              semana: ['Todos'],
               cidade: ['Todos'],
               area: ['Todos'],
               expurgo: 'Todos',
@@ -1880,6 +2058,13 @@ export default function App() {
               value={filters.mes}
               options={filterOptions.meses}
               onChange={(v) => setFilters(f => ({ ...f, mes: v }))}
+            />
+            <MultiFilterSelect 
+              label="Semana" 
+              icon={<Clock className="w-3.5 h-3.5" />}
+              value={filters.semana}
+              options={filterOptions.semanas}
+              onChange={(v) => setFilters(f => ({ ...f, semana: v }))}
             />
             <MultiFilterSelect 
               label="Cidade" 
@@ -2208,6 +2393,46 @@ export default function App() {
             </div>
           </div>
 
+          {/* Weekly AT1 Projection Chart */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <Calculator className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tighter">AT1 Projetado Semanal</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Projeção Mensal baseada na semana (%)</p>
+              </div>
+            </div>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyAt1ProjectionData} margin={{ top: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 11, fontWeight: 800 }} 
+                  />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} 
+                    unit="%"
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                    formatter={(val: number) => [`${val}%`, 'AT1 Projetado']}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[8, 8, 0, 0]} barSize={40} minPointSize={2}>
+                    <LabelList dataKey="value" position="top" formatter={(val: number) => `${val}%`} style={{ fill: '#EE1D23', fontSize: 11, fontWeight: 900 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
           {/* G1 by Tech Chart */}
           <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-md border border-slate-100">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-10 gap-4">
@@ -2527,6 +2752,44 @@ export default function App() {
               </ResponsiveContainer>
             </div>
             <p className="text-[10px] text-slate-400 font-bold italic mt-4">* Clique nas barras para filtrar por cidade.</p>
+          </div>
+
+          {/* AT1 Projetado por Cidade */}
+          <div className="bg-white p-8 rounded-3xl shadow-md border border-slate-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <Calculator className="w-5 h-5 text-[#EE1D23]" />
+              </div>
+              <h3 className="text-lg font-black text-[#333333] uppercase italic tracking-tight">AT1 Projetado por Cidade (%)</h3>
+            </div>
+            <div className="h-[600px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={at1ByCityData} 
+                  layout="vertical" 
+                  margin={{ left: 40, right: 40 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category"
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#333333', fontSize: 10, fontWeight: 800 }} 
+                    width={120}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="value" fill="#EE1D23" radius={[0, 8, 8, 0]} barSize={20}>
+                    <LabelList dataKey="value" position="right" formatter={(val: number) => `${val.toFixed(2)}%`} style={{ fill: '#EE1D23', fontSize: 11, fontWeight: 900 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-[10px] text-slate-400 font-bold italic mt-4">* Projeção baseada em OS Executadas / Dias Trab * Dias Mês / Base.</p>
           </div>
 
           {/* Base por Tecnologia */}
